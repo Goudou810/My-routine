@@ -1909,16 +1909,21 @@ jobs:
       - name: Cle de signature
         env:
           KS_B64: ${{ secrets.KEYSTORE_B64 }}
+          KS_PASS_SECRET: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          if [ -z "$KS_B64" ]; then
-            echo "::error::Secret KEYSTORE_B64 manquant. Ajoute les secrets KEYSTORE_B64 et KEYSTORE_PASSWORD (Settings > Secrets and variables > Actions)."
-            exit 1
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS_SECRET" ]; then
+            echo "Cle de signature : secrets GitHub"
+            PASS="$KS_PASS_SECRET"
+          else
+            echo "Cle de signature : cle integree (aucun secret configure)"
+            KS_B64="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"
+            PASS="NlXmfWJAM9ctuRZofPV0pUUU"
           fi
           echo "$KS_B64" | tr -d ' \n\r' | base64 -d > "$RUNNER_TEMP/routine.p12"
+          echo "KS_PASS=$PASS" >> "$GITHUB_ENV"
       - name: Compiler
         env:
           KS_FILE: ${{ runner.temp }}/routine.p12
-          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
           KS_ALIAS: routine
           VC: ${{ github.run_number }}
         run: gradle assembleRelease --no-daemon
