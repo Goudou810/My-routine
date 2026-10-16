@@ -1,0 +1,1944 @@
+name: Construire l'APK
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Ecrire le projet
+        run: |
+          mkdir -p app/src/main/java/com/routine/app app/src/main/assets app/src/main/res/drawable app/src/main/res/mipmap-anydpi app/src/main/res/layout app/src/main/res/xml
+          cat > settings.gradle <<'EOF_0'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = 'Routine'
+          include ':app'
+          EOF_0
+          cat > app/build.gradle <<'EOF_1'
+          plugins { id 'com.android.application' version '8.5.2' }
+
+          def ksFile = System.getenv('KS_FILE')
+
+          android {
+              namespace 'com.routine.app'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.routine.app'
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 100 + (System.getenv('VC') ?: '0').toInteger()
+                  versionName '1.2'
+              }
+              signingConfigs {
+                  release {
+                      if (ksFile) {
+                          storeFile file(ksFile)
+                          storeType 'PKCS12'
+                          storePassword System.getenv('KS_PASS')
+                          keyAlias System.getenv('KS_ALIAS')
+                          keyPassword System.getenv('KS_PASS')
+                      }
+                  }
+              }
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      if (ksFile) signingConfig signingConfigs.release
+                  }
+              }
+              lint {
+                  checkReleaseBuilds false
+                  abortOnError false
+              }
+          }
+          EOF_1
+          cat > app/src/main/AndroidManifest.xml <<'EOF_2'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32"/>
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <application
+                  android:label="Ma routine"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <receiver android:name=".Sched$Alarm" android:exported="false"/>
+                  <receiver android:name=".Sched$Boot" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                      </intent-filter>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Tick" android:exported="false"/>
+                  <receiver android:name=".RoutineWidget" android:label="Ma routine - Grand" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/routine_widget_info"/>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Gaming" android:label="Ma routine - Gaming" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/w_gaming_info"/>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Cinema" android:label="Ma routine - Cinema" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/w_cinema_info"/>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Serie" android:label="Ma routine - Serie" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/w_serie_info"/>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Mini" android:label="Ma routine - Minimaliste" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/w_mini_info"/>
+                  </receiver>
+                  <receiver android:name=".RoutineWidget$Compact" android:label="Ma routine - Compact" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                      </intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/w_compact_info"/>
+                  </receiver>
+              </application>
+          </manifest>
+          EOF_2
+          cat > app/src/main/java/com/routine/app/MainActivity.java <<'EOF_3'
+          package com.routine.app;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import java.io.ByteArrayInputStream;
+          import java.io.IOException;
+          import java.io.InputStream;
+
+          public class MainActivity extends Activity {
+              static final String HOST = "appassets.androidplatform.net";
+              WebView w;
+
+              public class Bridge {
+                  @JavascriptInterface
+                  public void save(String json) {
+                      Sched.store(MainActivity.this, json);
+                      Sched.all(MainActivity.this);
+                      RoutineWidget.refreshAll(MainActivity.this);
+                  }
+              }
+
+              WebResourceResponse asset(Uri u) {
+                  if (u == null || !HOST.equals(u.getHost())) return null;
+                  String p = u.getPath();
+                  if (p == null || p.length() < 2) p = "/index.html";
+                  try {
+                      InputStream in = getAssets().open(p.substring(1));
+                      String mime = p.endsWith(".html") ? "text/html"
+                              : p.endsWith(".js") ? "application/javascript"
+                              : p.endsWith(".css") ? "text/css"
+                              : p.endsWith(".png") ? "image/png"
+                              : "application/octet-stream";
+                      return new WebResourceResponse(mime, "utf-8", in);
+                  } catch (IOException e) {
+                      return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", null,
+                              new ByteArrayInputStream(new byte[0]));
+                  }
+              }
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
+                  }
+                  w = new WebView(this);
+                  w.setBackgroundColor(0xFF070B1C);
+                  getWindow().setStatusBarColor(0xFF070B1C);
+                  getWindow().setNavigationBarColor(0xFF070B1C);
+                  w.getSettings().setJavaScriptEnabled(true);
+                  w.getSettings().setDomStorageEnabled(true);
+                  w.getSettings().setAllowFileAccess(false);
+                  w.getSettings().setAllowContentAccess(false);
+                  w.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                          return asset(r.getUrl());
+                      }
+
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                          Uri u = r.getUrl();
+                          if (HOST.equals(u.getHost())) return false;
+                          try {
+                              startActivity(new Intent(Intent.ACTION_VIEW, u));
+                          } catch (Exception e) {
+                          }
+                          return true;
+                      }
+                  });
+                  w.addJavascriptInterface(new Bridge(), "Android");
+                  setContentView(w);
+                  w.loadUrl("https://" + HOST + "/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (w.canGoBack()) w.goBack();
+                  else finish();
+              }
+          }
+          EOF_3
+          cat > app/src/main/java/com/routine/app/Sched.java <<'EOF_4'
+          package com.routine.app;
+
+          import android.app.AlarmManager;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import java.util.Calendar;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          public class Sched {
+              static SharedPreferences p(Context c) {
+                  return c.getSharedPreferences("r", 0);
+              }
+
+              static void store(Context c, String json) {
+                  p(c).edit().putString("d", json).apply();
+              }
+
+              static PendingIntent pi(Context c, int i, String s, String e, String t) {
+                  Intent it = new Intent(c, Alarm.class);
+                  it.putExtra("i", i);
+                  it.putExtra("s", s);
+                  it.putExtra("e", e);
+                  it.putExtra("t", t);
+                  return PendingIntent.getBroadcast(c, i, it,
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+              }
+
+              static void set(Context c, int i, String s, String e, String t) {
+                  String[] h = s.split(":");
+                  Calendar cal = Calendar.getInstance();
+                  cal.set(Calendar.HOUR_OF_DAY, Integer.parseInt(h[0]));
+                  cal.set(Calendar.MINUTE, Integer.parseInt(h[1]));
+                  cal.set(Calendar.SECOND, 0);
+                  cal.set(Calendar.MILLISECOND, 0);
+                  if (cal.getTimeInMillis() <= System.currentTimeMillis() + 1000) {
+                      cal.add(Calendar.DAY_OF_YEAR, 1);
+                  }
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  PendingIntent pend = pi(c, i, s, e, t);
+                  try {
+                      am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pend);
+                  } catch (SecurityException x) {
+                      am.set(AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pend);
+                  }
+              }
+
+              static void all(Context c) {
+                  try {
+                      AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                      int old = p(c).getInt("n", 0);
+                      for (int i = 0; i < old; i++) {
+                          am.cancel(pi(c, i, "", "", ""));
+                      }
+                      JSONArray a = new JSONArray(p(c).getString("d", "[]"));
+                      for (int i = 0; i < a.length(); i++) {
+                          JSONObject o = a.getJSONObject(i);
+                          if (o.optBoolean("n", true)) {
+                              set(c, i, o.getString("s"), o.getString("e"), o.getString("t"));
+                          }
+                      }
+                      p(c).edit().putInt("n", a.length()).apply();
+                  } catch (Exception x) {
+                  }
+              }
+
+              public static class Alarm extends BroadcastReceiver {
+                  @Override
+                  public void onReceive(Context c, Intent in) {
+                      int i = in.getIntExtra("i", 0);
+                      String s = in.getStringExtra("s");
+                      String e = in.getStringExtra("e");
+                      String t = in.getStringExtra("t");
+                      NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                      nm.createNotificationChannel(new NotificationChannel("r", "Routine", NotificationManager.IMPORTANCE_HIGH));
+                      PendingIntent open = PendingIntent.getActivity(c, 0,
+                              new Intent(c, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+                      Notification n = new Notification.Builder(c, "r")
+                              .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                              .setContentTitle(t)
+                              .setContentText(s + " - " + e)
+                              .setContentIntent(open)
+                              .setAutoCancel(true)
+                              .build();
+                      nm.notify(i, n);
+                      set(c, i, s, e, t);
+                  }
+              }
+
+              public static class Boot extends BroadcastReceiver {
+                  @Override
+                  public void onReceive(Context c, Intent in) {
+                      all(c);
+                      RoutineWidget.refreshAll(c);
+                  }
+              }
+          }
+          EOF_4
+          cat > app/src/main/java/com/routine/app/RoutineWidget.java <<'EOF_WIDGETJAVA'
+          package com.routine.app;
+
+          import android.app.AlarmManager;
+          import android.app.PendingIntent;
+          import android.appwidget.AppWidgetManager;
+          import android.appwidget.AppWidgetProvider;
+          import android.content.BroadcastReceiver;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.res.Configuration;
+          import android.graphics.Bitmap;
+          import android.os.Bundle;
+          import android.widget.RemoteViews;
+          import java.util.ArrayList;
+          import java.util.Calendar;
+          import java.util.List;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          public class RoutineWidget extends AppWidgetProvider {
+              protected int style() { return WidgetArt.HERO; }
+
+              public static class Gaming extends RoutineWidget {
+                  protected int style() { return WidgetArt.GAMING; }
+              }
+
+              public static class Cinema extends RoutineWidget {
+                  protected int style() { return WidgetArt.CINEMA; }
+              }
+
+              public static class Serie extends RoutineWidget {
+                  protected int style() { return WidgetArt.SERIE; }
+              }
+
+              public static class Mini extends RoutineWidget {
+                  protected int style() { return WidgetArt.MINI; }
+              }
+
+              public static class Compact extends RoutineWidget {
+                  protected int style() { return WidgetArt.COMPACT; }
+              }
+
+              // L'ordre correspond aux constantes WidgetArt (HERO, GAMING, CINEMA, SERIE, MINI, COMPACT)
+              static final Class<?>[] KINDS = {RoutineWidget.class, Gaming.class, Cinema.class,
+                      Serie.class, Mini.class, Compact.class};
+
+              @Override
+              public void onUpdate(Context c, AppWidgetManager m, int[] ids) {
+                  for (int id : ids) draw(c, m, id, style());
+                  schedule(c);
+              }
+
+              @Override
+              public void onAppWidgetOptionsChanged(Context c, AppWidgetManager m, int id, Bundle o) {
+                  draw(c, m, id, style());
+              }
+
+              @Override
+              public void onEnabled(Context c) {
+                  schedule(c);
+              }
+
+              @Override
+              public void onDisabled(Context c) {
+                  if (!any(c)) cancel(c);
+              }
+
+              public static void refreshAll(Context c) {
+                  AppWidgetManager m = AppWidgetManager.getInstance(c);
+                  boolean any = false;
+                  for (int i = 0; i < KINDS.length; i++) {
+                      int[] ids = m.getAppWidgetIds(new ComponentName(c, KINDS[i]));
+                      for (int id : ids) {
+                          draw(c, m, id, i);
+                          any = true;
+                      }
+                  }
+                  if (any) schedule(c);
+                  else cancel(c);
+              }
+
+              static boolean any(Context c) {
+                  AppWidgetManager m = AppWidgetManager.getInstance(c);
+                  for (Class<?> k : KINDS) {
+                      if (m.getAppWidgetIds(new ComponentName(c, k)).length > 0) return true;
+                  }
+                  return false;
+              }
+
+              static List<WidgetModel.Block> load(Context c) {
+                  List<WidgetModel.Block> l = new ArrayList<WidgetModel.Block>();
+                  try {
+                      JSONArray a = new JSONArray(c.getSharedPreferences("r", 0).getString("d", "[]"));
+                      for (int i = 0; i < a.length(); i++) {
+                          JSONObject o = a.getJSONObject(i);
+                          l.add(new WidgetModel.Block(WidgetModel.minutes(o.optString("s", "0:0")),
+                                  WidgetModel.minutes(o.optString("e", "0:0")), o.optString("t", "")));
+                      }
+                  } catch (Exception ignored) {
+                  }
+                  return l;
+              }
+
+              static void draw(Context c, AppWidgetManager m, int id, int style) {
+                  try {
+                      Bundle o = m.getAppWidgetOptions(id);
+                      float density = c.getResources().getDisplayMetrics().density;
+                      boolean land = c.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+                      float w, h;
+                      if (land) {
+                          w = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 0);
+                          h = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0);
+                      } else {
+                          w = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+                          h = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
+                      }
+                      if (w < 40) w = WidgetArt.REF_W[style];
+                      if (h < 30) h = WidgetArt.REF_H[style];
+                      Calendar cal = Calendar.getInstance();
+                      WidgetModel.State st = WidgetModel.compute(load(c),
+                              cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND));
+                      Bitmap b = WidgetArt.render(style, w, h, density, st);
+                      RemoteViews v = new RemoteViews(c.getPackageName(), R.layout.routine_widget);
+                      v.setImageViewBitmap(R.id.widget_img, b);
+                      v.setContentDescription(R.id.widget_img, st.desc());
+                      PendingIntent open = PendingIntent.getActivity(c, 0, new Intent(c, MainActivity.class),
+                              PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                      v.setOnClickPendingIntent(R.id.widget_root, open);
+                      m.updateAppWidget(id, v);
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              static PendingIntent tickIntent(Context c) {
+                  return PendingIntent.getBroadcast(c, 9001, new Intent(c, Tick.class),
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+              }
+
+              static void schedule(Context c) {
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  long now = System.currentTimeMillis();
+                  long at = now - now % 60000L + 60500L;
+                  PendingIntent p = tickIntent(c);
+                  try {
+                      am.setExactAndAllowWhileIdle(AlarmManager.RTC, at, p);
+                  } catch (SecurityException e) {
+                      am.set(AlarmManager.RTC, at, p);
+                  }
+              }
+
+              static void cancel(Context c) {
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  am.cancel(tickIntent(c));
+              }
+
+              public static class Tick extends BroadcastReceiver {
+                  @Override
+                  public void onReceive(Context c, Intent in) {
+                      refreshAll(c);
+                  }
+              }
+          }
+          EOF_WIDGETJAVA
+          cat > app/src/main/res/layout/routine_widget.xml <<'EOF_WIDGETLAYOUT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+              <ImageView
+                  android:id="@+id/widget_img"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:scaleType="fitXY"
+                  android:src="@drawable/widget_placeholder"
+                  android:contentDescription="Ma routine" />
+          </FrameLayout>
+          EOF_WIDGETLAYOUT
+          cat > app/src/main/res/xml/routine_widget_info.xml <<'EOF_WIDGETINFO'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="250dp"
+              android:minHeight="110dp"
+              android:minResizeWidth="180dp"
+              android:minResizeHeight="70dp"
+              android:targetCellWidth="4"
+              android:targetCellHeight="2"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WIDGETINFO
+          cat > app/src/main/java/com/routine/app/WidgetModel.java <<'EOF_WMODEL'
+          package com.routine.app;
+
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.List;
+
+          public class WidgetModel {
+              public static final int GENERIC = 0, GAME = 1, FILM = 2, TRADE = 3, READ = 4,
+                      LANG = 5, PAUSE = 6, WAKE = 7, REVIEW = 8;
+
+              public static class Block {
+                  public int s, e;
+                  public String t = "";
+                  public Block(int s, int e, String t) { this.s = s; this.e = e; this.t = t; }
+              }
+
+              public static class State {
+                  public boolean empty, active;
+                  public int cat;
+                  public float progress;
+                  public String title = "", time = "", pill = "", status = "", tagline = "", motto = "";
+
+                  public String desc() {
+                      if (empty) return "Ma routine, aucune activité";
+                      return "Ma routine, " + status + ", " + title + ", " + time + ", " + pill;
+                  }
+              }
+
+              public static int minutes(String v) {
+                  try {
+                      String[] p = v.split(":");
+                      return Integer.parseInt(p[0].trim()) * 60 + Integer.parseInt(p[1].trim());
+                  } catch (Exception e) {
+                      return 0;
+                  }
+              }
+
+              static String hm(int m) {
+                  m = ((m % 1440) + 1440) % 1440;
+                  return (m / 60 < 10 ? "0" : "") + (m / 60) + ":" + (m % 60 < 10 ? "0" : "") + (m % 60);
+              }
+
+              public static String fmt(int d) {
+                  if (d < 60) return d + " min";
+                  return (d / 60) + " h" + (d % 60 != 0 ? " " + (d % 60 < 10 ? "0" : "") + (d % 60) : "");
+              }
+
+              public static int category(String title) {
+                  String t = title == null ? "" : title.toLowerCase();
+                  if (t.startsWith("pause") || t.contains("déjeuner") || t.contains("dejeuner") || t.contains("dîner") || t.contains("diner")) return PAUSE;
+                  if (t.contains("jeu") || t.contains("game") || t.contains("gaming")) return GAME;
+                  if (t.contains("film") || t.contains("série") || t.contains("serie") || t.contains("ciné") || t.contains("cine")) return FILM;
+                  if (t.contains("trad")) return TRADE;
+                  if (t.contains("lecture") || t.contains("livre") || t.contains("read")) return READ;
+                  if (t.contains("anglais") || t.contains("english") || t.contains("langue")) return LANG;
+                  if (t.contains("réveil") || t.contains("reveil") || t.contains("lever")) return WAKE;
+                  if (t.contains("bilan") || t.contains("ooda")) return REVIEW;
+                  return GENERIC;
+              }
+
+              static String tagline(int c) {
+                  switch (c) {
+                      case GAME: return "Concentre-toi. Le meilleur est devant toi.";
+                      case FILM: return "Détends-toi et profite du moment.";
+                      case TRADE: return "Respecte ton plan, un trade à la fois.";
+                      case READ: return "Une page après l'autre.";
+                      case LANG: return "Chaque jour, un peu mieux.";
+                      case PAUSE: return "Respire. Recharge-toi.";
+                      case WAKE: return "Une belle journée t'attend.";
+                      case REVIEW: return "Observer, s'orienter, décider, agir.";
+                      default: return "Reste concentré sur l'essentiel.";
+                  }
+              }
+
+              static String motto(int c) {
+                  switch (c) {
+                      case GAME: return "Level Up";
+                      case FILM: return "Showtime";
+                      case TRADE: return "Stay sharp";
+                      case READ: return "Page turner";
+                      case LANG: return "Keep going";
+                      case PAUSE: return "Recharge";
+                      case WAKE: return "Rise & shine";
+                      case REVIEW: return "Debrief";
+                      default: return "Focus";
+                  }
+              }
+
+              public static State compute(List<Block> in, int nowMin, int nowSec) {
+                  State st = new State();
+                  if (in == null || in.isEmpty()) {
+                      st.empty = true;
+                      st.title = "Aucune activité";
+                      st.time = "Ouvre Ma routine";
+                      st.status = "Ma routine";
+                      st.tagline = "Ajoute tes blocs dans l'app.";
+                      st.motto = "Focus";
+                      return st;
+                  }
+                  List<Block> l = new ArrayList<Block>(in);
+                  Collections.sort(l, new Comparator<Block>() {
+                      public int compare(Block a, Block b) { return a.s - b.s; }
+                  });
+                  float now = nowMin + nowSec / 60f;
+                  Block cur = null, next = null;
+                  for (Block b : l) {
+                      if (b.s <= now && now < b.e) { cur = b; break; }
+                  }
+                  if (cur != null) {
+                      st.active = true;
+                      st.status = "En cours";
+                      st.progress = Math.max(0f, Math.min(1f, (now - cur.s) / Math.max(1, cur.e - cur.s)));
+                      int rem = (int) Math.ceil(cur.e - now);
+                      st.pill = fmt(Math.max(1, rem));
+                      fill(st, cur);
+                      return st;
+                  }
+                  int delta = 0;
+                  for (Block b : l) {
+                      if (b.s > now) { next = b; delta = (int) Math.ceil(b.s - now); break; }
+                  }
+                  if (next == null) {
+                      next = l.get(0);
+                      delta = (int) Math.ceil(next.s + 1440 - now);
+                  }
+                  st.active = false;
+                  st.status = "Ensuite";
+                  st.progress = 0f;
+                  st.pill = "Dans " + fmt(Math.max(1, delta));
+                  fill(st, next);
+                  return st;
+              }
+
+              private static void fill(State st, Block b) {
+                  st.title = b.t;
+                  st.time = hm(b.s) + " – " + hm(b.e);
+                  st.cat = category(b.t);
+                  st.tagline = tagline(st.cat);
+                  st.motto = motto(st.cat);
+              }
+          }
+          EOF_WMODEL
+          cat > app/src/main/java/com/routine/app/WidgetArt.java <<'EOF_WART'
+          package com.routine.app;
+
+          import android.graphics.Bitmap;
+          import android.graphics.BlurMaskFilter;
+          import android.graphics.Canvas;
+          import android.graphics.LinearGradient;
+          import android.graphics.Paint;
+          import android.graphics.Path;
+          import android.graphics.PorterDuff;
+          import android.graphics.PorterDuffXfermode;
+          import android.graphics.RadialGradient;
+          import android.graphics.RectF;
+          import android.graphics.Shader;
+          import android.graphics.Typeface;
+
+          public class WidgetArt {
+              public static final int HERO = 0, GAMING = 1, CINEMA = 2, SERIE = 3, MINI = 4, COMPACT = 5;
+              public static final float[] REF_W = {360, 200, 200, 200, 300, 250};
+              public static final float[] REF_H = {150, 132, 132, 132, 92, 76};
+              static final float[] RAD = {26, 22, 22, 22, 22, 20};
+
+              static final int I_GAME = 1, I_FILM = 2, I_PLAY = 3, I_TRADE = 4, I_READ = 5, I_LANG = 6,
+                      I_PAUSE = 7, I_WAKE = 8, I_TARGET = 9, I_CLOCK = 10, I_STOP = 11, I_CHEV = 12, I_CROWN = 13;
+
+              static final Paint.Align LEFT = Paint.Align.LEFT, RIGHT = Paint.Align.RIGHT, CENTER = Paint.Align.CENTER;
+
+              private Canvas cv;
+              private float d, Wd, Hd;
+              private WidgetModel.State st;
+              private int[] th;
+              private final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
+              private final Typeface MED = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+              private final Typeface REG = Typeface.create("sans-serif", Typeface.NORMAL);
+              private final Typeface SCRIPT = Typeface.create("cursive", Typeface.BOLD);
+
+              public static Bitmap render(int style, float wDp, float hDp, float density, WidgetModel.State st) {
+                  if (wDp < 60) wDp = 60;
+                  if (hDp < 40) hDp = 40;
+                  float k = Math.min(wDp / REF_W[style], hDp / REF_H[style]);
+                  float px = wDp * density, py = hDp * density;
+                  float f = 1f;
+                  if (px * py > 1500000f) f = (float) Math.sqrt(1500000f / (px * py));
+                  int w = Math.max(1, Math.round(px * f)), h = Math.max(1, Math.round(py * f));
+                  Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                  WidgetArt a = new WidgetArt();
+                  a.cv = new Canvas(bmp);
+                  a.st = st;
+                  a.th = TH[Math.max(0, Math.min(8, st.cat))];
+                  a.d = density * f * k;
+                  a.Wd = w / a.d;
+                  a.Hd = h / a.d;
+                  a.cv.scale(a.d, a.d);
+                  switch (style) {
+                      case GAMING: a.v1(); break;
+                      case CINEMA: a.v2(); break;
+                      case SERIE: a.v3(); break;
+                      case MINI: a.v4(); break;
+                      case COMPACT: a.v5(); break;
+                      default: a.hero(); break;
+                  }
+                  a.finish(RAD[style], style == MINI ? al(a.th[3], 0x66) : 0x33FFFFFF);
+                  return bmp;
+              }
+
+              // ---------- helpers ----------
+              static float f(String s) { return Float.parseFloat(s); }
+
+              static Path path(String dd) {
+                  Path p = new Path();
+                  String[] t = dd.trim().split("[\\s,]+");
+                  int i = 0;
+                  char cmd = 'M';
+                  while (i < t.length) {
+                      String s = t[i];
+                      if (Character.isLetter(s.charAt(0))) {
+                          cmd = s.charAt(0);
+                          i++;
+                          if (cmd == 'Z') p.close();
+                          continue;
+                      }
+                      switch (cmd) {
+                          case 'M': p.moveTo(f(t[i]), f(t[i + 1])); i += 2; cmd = 'L'; break;
+                          case 'L': p.lineTo(f(t[i]), f(t[i + 1])); i += 2; break;
+                          case 'C': p.cubicTo(f(t[i]), f(t[i + 1]), f(t[i + 2]), f(t[i + 3]), f(t[i + 4]), f(t[i + 5])); i += 6; break;
+                          case 'Q': p.quadTo(f(t[i]), f(t[i + 1]), f(t[i + 2]), f(t[i + 3])); i += 4; break;
+                          default: i++;
+                      }
+                  }
+                  return p;
+              }
+
+              Paint fill(int c) {
+                  Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  p.setColor(c);
+                  return p;
+              }
+
+              Paint stroke(int c, float w) {
+                  Paint p = fill(c);
+                  p.setStyle(Paint.Style.STROKE);
+                  p.setStrokeWidth(w);
+                  p.setStrokeCap(Paint.Cap.ROUND);
+                  p.setStrokeJoin(Paint.Join.ROUND);
+                  return p;
+              }
+
+              Paint lg(Paint p, float x0, float y0, float x1, float y1, int c0, int c1) {
+                  p.setShader(new LinearGradient(x0, y0, x1, y1, c0, c1, Shader.TileMode.CLAMP));
+                  return p;
+              }
+
+              Paint blur(Paint p, float r) {
+                  p.setMaskFilter(new BlurMaskFilter(Math.max(0.5f, r * d), BlurMaskFilter.Blur.NORMAL));
+                  return p;
+              }
+
+              Paint tp(int c, float size, Typeface tf, Paint.Align a) {
+                  Paint p = fill(c);
+                  p.setTextSize(size);
+                  p.setTypeface(tf);
+                  p.setTextAlign(a);
+                  return p;
+              }
+
+              void txt(String s, float x, float cy, Paint p) {
+                  Paint.FontMetrics m = p.getFontMetrics();
+                  cv.drawText(s, x, cy - (m.ascent + m.descent) / 2f, p);
+              }
+
+              String fit(String s, Paint p, float maxW) {
+                  float min = p.getTextSize() * 0.72f;
+                  while (p.measureText(s) > maxW && p.getTextSize() > min) p.setTextSize(p.getTextSize() - 0.5f);
+                  if (p.measureText(s) <= maxW) return s;
+                  int n = p.breakText(s, true, Math.max(1f, maxW - p.measureText("…")), null);
+                  return s.substring(0, Math.max(0, n)).trim() + "…";
+              }
+
+              void glow(float cx, float cy, float r, int col) {
+                  Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  p.setShader(new RadialGradient(cx, cy, r, col, col & 0x00FFFFFF, Shader.TileMode.CLAMP));
+                  cv.drawCircle(cx, cy, r, p);
+              }
+
+              void bg(int c0, int c1, int c2) {
+                  Paint p = new Paint();
+                  p.setShader(new LinearGradient(0, 0, Wd, Hd, new int[]{c0, c1, c2}, new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+                  cv.drawRect(0, 0, Wd, Hd, p);
+              }
+
+              void finish(float r, int border) {
+                  Path m = new Path();
+                  m.addRoundRect(new RectF(0, 0, Wd, Hd), r, r, Path.Direction.CW);
+                  m.setFillType(Path.FillType.INVERSE_WINDING);
+                  Paint c = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  c.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+                  cv.drawPath(m, c);
+                  cv.drawRoundRect(new RectF(0.6f, 0.6f, Wd - 0.6f, Hd - 0.6f), r, r, stroke(border, 1.2f));
+              }
+
+              void ring(float cx, float cy, float r, float sw, float prog, int c0, int c1, int track, boolean glowOn) {
+                  RectF o = new RectF(cx - r, cy - r, cx + r, cy + r);
+                  cv.drawArc(o, 0, 360, false, stroke(track, sw));
+                  if (prog > 0.003f) {
+                      if (glowOn) {
+                          Paint g = blur(stroke(c1, sw + 2), 5);
+                          lg(g, cx - r, cy + r, cx + r, cy - r, c0, c1);
+                          cv.drawArc(o, -90, 360f * prog, false, g);
+                      }
+                      Paint a = stroke(c1, sw);
+                      lg(a, cx - r, cy + r, cx + r, cy - r, c0, c1);
+                      cv.drawArc(o, -90, 360f * prog, false, a);
+                  }
+              }
+
+              float pillW(String s, float ts, boolean ic) {
+                  return tp(0, ts, BOLD, LEFT).measureText(s) + ts * 1.7f + (ic ? ts * 1.4f : 0f);
+              }
+
+              void pill(float x, float cy, float h, String s, float ts, int c0, int c1, int fg, int ic, int border) {
+                  float w = pillW(s, ts, ic > 0);
+                  RectF r = new RectF(x, cy - h / 2, x + w, cy + h / 2);
+                  if (c0 != 0) {
+                      Paint p = fill(0xFFFFFFFF);
+                      lg(p, x, 0, x + w, 0, c0, c1);
+                      cv.drawRoundRect(r, h / 2, h / 2, p);
+                  }
+                  if (border != 0) {
+                      cv.drawRoundRect(new RectF(x + 0.6f, cy - h / 2 + 0.6f, x + w - 0.6f, cy + h / 2 - 0.6f), h / 2, h / 2, stroke(border, 1.2f));
+                  }
+                  float tx = x + ts * 0.85f;
+                  if (ic > 0) {
+                      icon(ic, tx + ts * 0.55f, cy, ts * 1.2f, fg, fg, 1.9f);
+                      tx += ts * 1.4f;
+                  }
+                  txt(s, tx, cy, tp(fg, ts, BOLD, LEFT));
+              }
+
+              static int iconFor(int cat) {
+                  switch (cat) {
+                      case WidgetModel.GAME: return I_GAME;
+                      case WidgetModel.FILM: return I_FILM;
+                      case WidgetModel.TRADE: return I_TRADE;
+                      case WidgetModel.READ: return I_READ;
+                      case WidgetModel.LANG: return I_LANG;
+                      case WidgetModel.PAUSE: return I_PAUSE;
+                      case WidgetModel.WAKE: return I_WAKE;
+                      case WidgetModel.REVIEW: return I_TARGET;
+                      default: return I_CLOCK;
+                  }
+              }
+
+              void icon(int k, float cx, float cy, float size, int c0, int c1, float sw) {
+                  cv.save();
+                  cv.translate(cx - size / 2f, cy - size / 2f);
+                  float g = size / 24f;
+                  cv.scale(g, g);
+                  Paint s = stroke(c0, sw);
+                  Paint f = fill(c0);
+                  if (c0 != c1) {
+                      lg(s, 0, 24, 24, 0, c0, c1);
+                      lg(f, 0, 24, 24, 0, c0, c1);
+                  }
+                  switch (k) {
+                      case I_GAME:
+                          cv.drawPath(path("M 7 7 L 17 7 C 20 7 22 10 22.6 14 L 23 17.4 C 23.3 19.8 21.6 21 19.6 20.2 C 18 19.5 17 17.6 15.6 17.6 L 8.4 17.6 C 7 17.6 6 19.5 4.4 20.2 C 2.4 21 0.7 19.8 1 17.4 L 1.4 14 C 2 10 4 7 7 7 Z"), s);
+                          cv.drawPath(path("M 5 12.6 L 9 12.6 M 7 10.6 L 7 14.6"), s);
+                          cv.drawCircle(16f, 11.4f, 1.2f, f);
+                          cv.drawCircle(18.6f, 13.8f, 1.2f, f);
+                          break;
+                      case I_FILM:
+                          cv.drawPath(path("M 3 10 L 21 10 L 21 20 C 21 20.6 20.6 21 20 21 L 4 21 C 3.4 21 3 20.6 3 20 Z"), s);
+                          cv.drawPath(path("M 2.6 6 L 20.6 3 L 21.3 7 L 3.3 10 Z"), s);
+                          cv.drawPath(path("M 7.4 5.4 L 9 9.3 M 12 4.6 L 13.6 8.5 M 16.6 3.8 L 18.2 7.7"), s);
+                          cv.drawPath(path("M 10 13 L 10 18.4 L 14.6 15.7 Z"), f);
+                          break;
+                      case I_PLAY:
+                          cv.drawPath(path("M 8.5 6 L 8.5 18 L 18.5 12 Z"), f);
+                          cv.drawPath(path("M 8.5 6 L 8.5 18 L 18.5 12 Z"), s);
+                          break;
+                      case I_TRADE:
+                          cv.drawPath(path("M 6 3 L 6 21 M 12 2 L 12 19 M 18 6 L 18 22"), s);
+                          cv.drawPath(path("M 4.3 8 L 7.7 8 L 7.7 16 L 4.3 16 Z M 10.3 5 L 13.7 5 L 13.7 14 L 10.3 14 Z M 16.3 10 L 19.7 10 L 19.7 18 L 16.3 18 Z"), s);
+                          break;
+                      case I_READ:
+                          cv.drawPath(path("M 12 6.5 C 9.5 4.8 6 4.6 3 5.6 L 3 19 C 6 18 9.5 18.2 12 19.8 C 14.5 18.2 18 18 21 19 L 21 5.6 C 18 4.6 14.5 4.8 12 6.5 Z M 12 6.5 L 12 19.8"), s);
+                          break;
+                      case I_LANG:
+                          cv.drawPath(path("M 5 4 L 19 4 C 20.1 4 21 4.9 21 6 L 21 14 C 21 15.1 20.1 16 19 16 L 11 16 L 7 20 L 7 16 L 5 16 C 3.9 16 3 15.1 3 14 L 3 6 C 3 4.9 3.9 4 5 4 Z M 8 8.5 L 16 8.5 M 8 11.5 L 13 11.5"), s);
+                          break;
+                      case I_PAUSE:
+                          cv.drawPath(path("M 4.5 9 L 16.5 9 L 16.5 15 C 16.5 18 14.5 20 11.5 20 L 9.5 20 C 6.5 20 4.5 18 4.5 15 Z M 16.5 10.5 L 18 10.5 C 20.5 10.5 20.5 15.5 18 15.5 L 16.2 15.5 M 8 3 C 9 4.5 7 5.5 8 7 M 12 3 C 13 4.5 11 5.5 12 7"), s);
+                          break;
+                      case I_WAKE:
+                          cv.drawCircle(12f, 12f, 4.2f, s);
+                          cv.drawPath(path("M 12 2.5 L 12 5 M 12 19 L 12 21.5 M 2.5 12 L 5 12 M 19 12 L 21.5 12 M 5.3 5.3 L 7 7 M 17 17 L 18.7 18.7 M 5.3 18.7 L 7 17 M 17 7 L 18.7 5.3"), s);
+                          break;
+                      case I_TARGET:
+                          cv.drawCircle(12f, 12f, 9f, s);
+                          cv.drawCircle(12f, 12f, 4.8f, s);
+                          cv.drawPath(path("M 12 12 L 20.5 3.5 M 20.5 3.5 L 20.5 7.2 M 20.5 3.5 L 16.8 3.5"), s);
+                          break;
+                      case I_STOP:
+                          cv.drawCircle(12f, 14f, 7.5f, s);
+                          cv.drawPath(path("M 9.5 2.8 L 14.5 2.8 M 12 2.8 L 12 6.5 M 18 7 L 19.4 5.6 M 12 14 L 12 9.8"), s);
+                          break;
+                      case I_CHEV:
+                          cv.drawPath(path("M 9 5 L 16 12 L 9 19"), s);
+                          break;
+                      case I_CROWN:
+                          cv.drawPath(path("M 3 18 L 3 8 L 8 12 L 12 5 L 16 12 L 21 8 L 21 18 Z M 3 21 L 21 21"), s);
+                          break;
+                      default:
+                          cv.drawCircle(12f, 12f, 9f, s);
+                          cv.drawPath(path("M 12 7 L 12 12 L 15.5 14"), s);
+                  }
+                  cv.restore();
+              }
+
+              void header(float x, float y, float size, float ts, int col, boolean chev) {
+                  icon(I_STOP, x + size / 2, y, size, col, col, 1.7f);
+                  txt("Ma routine", x + size + 5, y, tp(col, ts, MED, LEFT));
+                  if (chev) icon(I_CHEV, Wd - 16, y, size * 0.85f, col, col, 2.2f);
+              }
+
+              void clockRow(float x, float cy, float size, float ts, int col) {
+                  icon(I_CLOCK, x + size / 2, cy, size, col, col, 1.8f);
+                  txt(st.time, x + size + 5, cy, tp(col, ts, REG, LEFT));
+              }
+
+              void controller(float cx, float cy, float sc, float rot) {
+                  cv.save();
+                  cv.translate(cx, cy);
+                  cv.rotate(rot);
+                  cv.scale(sc, sc);
+                  cv.translate(-100f, -65f);
+                  Path body = path("M 38 18 C 55 10 80 12 100 16 C 120 12 145 10 162 18 C 176 26 190 70 196 98 C 200 116 190 128 176 124 C 160 122 148 100 134 95 C 120 90 80 90 66 95 C 52 100 40 122 24 124 C 10 128 0 116 4 98 C 10 70 24 26 38 18 Z");
+                  Paint g = blur(stroke(0xFFFFFFFF, 5), 7);
+                  lg(g, 0, 0, 200, 130, 0xFFFF3D9A, 0xFF3D8CFF);
+                  cv.drawPath(body, g);
+                  Paint fl = fill(0xFFFFFFFF);
+                  lg(fl, 0, 10, 0, 125, 0xFF1D2358, 0xFF080B22);
+                  cv.drawPath(body, fl);
+                  Paint rim = stroke(0xFFFFFFFF, 1.8f);
+                  lg(rim, 0, 0, 200, 130, 0xFFC06BFF, 0xFF3DA5FF);
+                  cv.drawPath(body, rim);
+                  cv.drawRoundRect(new RectF(72, 24, 128, 46), 5, 5, fill(0x22FFFFFF));
+                  cv.drawRoundRect(new RectF(72, 24, 128, 46), 5, 5, stroke(0x44FFFFFF, 1f));
+                  cv.drawLine(82, 20, 118, 20, blur(stroke(0xFF5AA8FF, 2.4f), 2));
+                  cv.drawLine(82, 20, 118, 20, stroke(0xFF9CCBFF, 1.4f));
+                  cv.drawPath(path("M 44 48 L 56 48 M 50 42 L 50 54"), stroke(0xFF93A0FF, 3.2f));
+                  Paint b1 = stroke(0xFF3DDCFF, 1.8f), b2 = stroke(0xFFFF5CB0, 1.8f), b3 = stroke(0xFFB06BFF, 1.8f);
+                  cv.drawCircle(150f, 39f, 5f, b1);
+                  cv.drawCircle(150f, 57f, 5f, b3);
+                  cv.drawCircle(141f, 48f, 5f, b3);
+                  cv.drawCircle(159f, 48f, 5f, b2);
+                  Paint sk = fill(0xFF0A0D2C);
+                  cv.drawCircle(80f, 72f, 12f, sk);
+                  cv.drawCircle(120f, 72f, 12f, sk);
+                  Paint sr = stroke(0xFF6B7BFF, 1.5f);
+                  cv.drawCircle(80f, 72f, 12f, sr);
+                  cv.drawCircle(120f, 72f, 12f, sr);
+                  cv.drawCircle(80f, 72f, 6f, stroke(0x886B7BFF, 1.2f));
+                  cv.drawCircle(120f, 72f, 6f, stroke(0x886B7BFF, 1.2f));
+                  cv.drawCircle(100f, 58f, 3.4f, stroke(0xAAFFFFFF, 1.3f));
+                  cv.restore();
+              }
+
+              // ---------- thèmes par mode ----------
+              // {fond0, fond1, fond2, accent A, accent B, lueur 1, lueur 2} indexé par catégorie
+              static final int[][] TH = {
+                  /* GENERIC */ {0xFF081028, 0xFF0E1F5C, 0xFF1B2A8C, 0xFF60A5FA, 0xFF818CF8, 0x883B6BFF, 0x666B8CFF},
+                  /* GAME    */ {0xFF070B1C, 0xFF0C1330, 0xFF150F3E, 0xFFB06BFF, 0xFF3B8CFF, 0x883D2BFF, 0x66E91E8C},
+                  /* FILM    */ {0xFF120706, 0xFF2A0E06, 0xFF4A1A06, 0xFFFFB347, 0xFFFF6A00, 0x99FF7A1A, 0x66FF3D2B},
+                  /* TRADE   */ {0xFF04140F, 0xFF062A22, 0xFF08354A, 0xFF34E0A1, 0xFF19A6FF, 0x8800C896, 0x6619A6FF},
+                  /* READ    */ {0xFF140D05, 0xFF2A1A0A, 0xFF40260C, 0xFFFFD166, 0xFFEF8354, 0x88FFB03A, 0x66EF8354},
+                  /* LANG    */ {0xFF14061C, 0xFF2A0C3A, 0xFF3A1458, 0xFFFF6BD6, 0xFF6B8CFF, 0x88FF4FD0, 0x666B8CFF},
+                  /* PAUSE   */ {0xFF041418, 0xFF06303A, 0xFF0A4A52, 0xFF5EEAD4, 0xFF38BDF8, 0x8833D6C0, 0x6638BDF8},
+                  /* WAKE    */ {0xFF1A0C1E, 0xFF4A1A3A, 0xFF7A2A2A, 0xFFFFD36B, 0xFFFF7A59, 0xAAFF9A3D, 0x66FF5A8A},
+                  /* REVIEW  */ {0xFF0A0A24, 0xFF161645, 0xFF22226A, 0xFFA78BFA, 0xFF6366F1, 0x886366F1, 0x66A78BFA}
+              };
+
+              static int al(int c, int a) { return (c & 0x00FFFFFF) | (a << 24); }
+
+              static int mix(int c1, int c2, float t) {
+                  int r = Math.round(((c1 >> 16) & 255) * (1 - t) + ((c2 >> 16) & 255) * t);
+                  int g = Math.round(((c1 >> 8) & 255) * (1 - t) + ((c2 >> 8) & 255) * t);
+                  int b = Math.round((c1 & 255) * (1 - t) + (c2 & 255) * t);
+                  return 0xFF000000 | (r << 16) | (g << 8) | b;
+              }
+
+              int onAcc() {
+                  int a = th[3];
+                  float l = (0.299f * ((a >> 16) & 255) + 0.587f * ((a >> 8) & 255) + 0.114f * (a & 255)) / 255f;
+                  return l > 0.62f ? 0xFF1A1205 : 0xFFFFFFFF;
+              }
+
+              // Décor propre à chaque mode, dessiné dans une boîte s x s centrée en (cx, cy)
+              void scene(int cat, float cx, float cy, float s) {
+                  if (cat == WidgetModel.GAME) {
+                      controller(cx, cy, s * 1.25f / 200f, -9f);
+                      return;
+                  }
+                  cv.save();
+                  cv.translate(cx - s / 2f, cy - s / 2f);
+                  float g = s / 100f;
+                  cv.scale(g, g);
+                  int A = th[3], B = th[4], W = 0xFFFFFFFF;
+                  switch (cat) {
+                      case WidgetModel.FILM: {
+                          glow(50, 38, 52, al(A, 0x66));
+                          cv.drawRoundRect(new RectF(8, 10, 92, 60), 5, 5, fill(0xFF0B0504));
+                          Paint sc = fill(W);
+                          lg(sc, 8, 10, 92, 60, mix(A, W, 0.35f), B);
+                          cv.drawRoundRect(new RectF(12, 14, 88, 56), 3, 3, sc);
+                          cv.drawRoundRect(new RectF(2, 70, 98, 106), 14, 14, fill(0xFF140806));
+                          cv.drawCircle(50f, 62f, 8f, fill(0xFF050202));
+                          cv.drawRoundRect(new RectF(36, 69, 64, 106), 12, 12, fill(0xFF050202));
+                          break;
+                      }
+                      case WidgetModel.TRADE: {
+                          glow(50, 50, 55, al(A, 0x44));
+                          Paint gr = stroke(0x22FFFFFF, 0.8f);
+                          for (int i = 0; i < 4; i++) cv.drawLine(4, 20 + i * 20, 96, 20 + i * 20, gr);
+                          float[][] c = {{60, 88, 66, 82, 0}, {52, 84, 58, 78, 1}, {44, 74, 50, 68, 1},
+                                  {46, 70, 52, 64, 0}, {30, 62, 36, 56, 1}, {16, 48, 22, 42, 1}};
+                          for (int i = 0; i < c.length; i++) {
+                              float x = 14 + i * 14.4f;
+                              int col = c[i][4] > 0 ? 0xFF34E0A1 : 0xFFFF5C7A;
+                              cv.drawLine(x, c[i][0], x, c[i][1], stroke(col, 1.6f));
+                              cv.drawRoundRect(new RectF(x - 4, c[i][2], x + 4, c[i][3]), 1.5f, 1.5f, fill(col));
+                          }
+                          Paint gl = blur(stroke(W, 4f), 4);
+                          lg(gl, 6, 0, 94, 0, A, B);
+                          cv.drawPath(path("M 8 80 L 28 68 L 46 58 L 62 52 L 80 32 L 94 18"), gl);
+                          Paint ln = stroke(W, 2.2f);
+                          lg(ln, 6, 0, 94, 0, A, B);
+                          cv.drawPath(path("M 8 80 L 28 68 L 46 58 L 62 52 L 80 32 L 94 18"), ln);
+                          cv.drawPath(path("M 85 17 L 94 18 L 91 26"), ln);
+                          break;
+                      }
+                      case WidgetModel.READ: {
+                          glow(50, 40, 55, al(A, 0x77));
+                          Paint pg = fill(W);
+                          lg(pg, 0, 30, 0, 86, mix(A, W, 0.8f), mix(A, 0xFF000000, 0.1f));
+                          cv.drawPath(path("M 50 34 C 38 26 20 26 6 31 L 6 82 C 20 78 38 78 50 86 Z"), pg);
+                          cv.drawPath(path("M 50 34 C 62 26 80 26 94 31 L 94 82 C 80 78 62 78 50 86 Z"), pg);
+                          cv.drawLine(50, 34, 50, 86, stroke(0x66000000, 1.4f));
+                          Paint tl = stroke(0x33000000, 1.4f);
+                          for (int i = 0; i < 4; i++) {
+                              float y = 42 + i * 9;
+                              cv.drawLine(14, y, 42, y, tl);
+                              cv.drawLine(58, y, 86, y, tl);
+                          }
+                          cv.drawCircle(22f, 14f, 2.2f, blur(fill(W), 2));
+                          cv.drawCircle(78f, 10f, 1.8f, blur(fill(W), 2));
+                          cv.drawCircle(50f, 8f, 2.4f, blur(fill(W), 2));
+                          break;
+                      }
+                      case WidgetModel.LANG: {
+                          glow(50, 50, 52, al(A, 0x55));
+                          Paint b1 = fill(W);
+                          lg(b1, 6, 12, 66, 44, A, mix(A, B, 0.5f));
+                          cv.drawRoundRect(new RectF(6, 12, 66, 44), 12, 12, b1);
+                          cv.drawPath(path("M 16 42 L 14 54 L 28 42 Z"), fill(A));
+                          Paint b2 = fill(W);
+                          lg(b2, 34, 52, 94, 84, mix(A, B, 0.5f), B);
+                          cv.drawRoundRect(new RectF(34, 52, 94, 84), 12, 12, b2);
+                          cv.drawPath(path("M 84 82 L 88 94 L 72 82 Z"), fill(B));
+                          txt("Hello", 36, 28, tp(W, 14, BOLD, CENTER));
+                          txt("Bonjour", 64, 68, tp(W, 12, BOLD, CENTER));
+                          break;
+                      }
+                      case WidgetModel.PAUSE: {
+                          glow(50, 56, 52, al(A, 0x66));
+                          Paint cup = fill(W);
+                          lg(cup, 0, 44, 0, 90, W, mix(A, W, 0.4f));
+                          cv.drawPath(path("M 22 44 L 68 44 L 68 66 C 68 80 58 88 45 88 C 32 88 22 80 22 66 Z"), cup);
+                          cv.drawPath(path("M 68 50 L 76 50 C 90 50 90 72 76 72 L 66 72"), stroke(W, 4f));
+                          cv.drawRoundRect(new RectF(12, 90, 80, 95), 2.5f, 2.5f, fill(al(A, 0xCC)));
+                          String[] sm = {"M 34 36 C 30 28 38 24 34 14", "M 46 36 C 42 28 50 24 46 12", "M 58 36 C 54 28 62 24 58 14"};
+                          for (String q : sm) {
+                              cv.drawPath(path(q), blur(stroke(al(W, 0x99), 4f), 3));
+                              cv.drawPath(path(q), stroke(al(W, 0xCC), 2.4f));
+                          }
+                          break;
+                      }
+                      case WidgetModel.WAKE: {
+                          glow(50, 62, 60, al(A, 0x88));
+                          Paint sun = fill(W);
+                          lg(sun, 0, 38, 0, 86, A, B);
+                          cv.drawPath(path("M 26 66 C 26 34 74 34 74 66 Z"), sun);
+                          Paint ry = stroke(A, 2.6f);
+                          for (int i = 0; i < 7; i++) {
+                              float an = (float) Math.PI + i * (float) Math.PI / 6f;
+                              float co = (float) Math.cos(an), si = (float) Math.sin(an);
+                              cv.drawLine(50 + 32 * co, 62 + 32 * si, 50 + 42 * co, 62 + 42 * si, ry);
+                          }
+                                          cv.drawLine(10, 70, 90, 70, stroke(al(A, 0xAA), 1.8f));
+                          cv.drawLine(24, 79, 76, 79, stroke(al(A, 0x77), 1.6f));
+                          cv.drawLine(36, 88, 64, 88, stroke(al(A, 0x55), 1.4f));
+                          break;
+                      }
+                      case WidgetModel.REVIEW: {
+                          glow(50, 50, 54, al(A, 0x66));
+                          cv.drawCircle(50f, 50f, 38f, fill(al(A, 0x33)));
+                          cv.drawCircle(50f, 50f, 38f, stroke(A, 3f));
+                          cv.drawCircle(50f, 50f, 26f, stroke(mix(A, B, 0.5f), 3f));
+                          cv.drawCircle(50f, 50f, 14f, stroke(B, 3f));
+                          cv.drawCircle(50f, 50f, 4f, fill(W));
+                          Paint ar = stroke(W, 3f);
+                          cv.drawLine(50, 50, 86, 14, ar);
+                          cv.drawPath(path("M 86 14 L 95 13 M 86 14 L 87 5"), ar);
+                          break;
+                      }
+                      default: {
+                          glow(50, 50, 52, al(A, 0x55));
+                          cv.drawCircle(50f, 50f, 36f, fill(0x14FFFFFF));
+                          cv.drawCircle(50f, 50f, 36f, stroke(A, 3f));
+                          Paint tk = stroke(al(W, 0xAA), 2f);
+                          for (int i = 0; i < 12; i++) {
+                              float an = i * (float) Math.PI / 6f;
+                              float co = (float) Math.cos(an), si = (float) Math.sin(an);
+                              cv.drawLine(50 + 29 * co, 50 + 29 * si, 50 + 33 * co, 50 + 33 * si, tk);
+                          }
+                          Paint hd = stroke(W, 3.4f);
+                          cv.drawLine(50, 50, 50, 28, hd);
+                          cv.drawLine(50, 50, 66, 58, hd);
+                          cv.drawCircle(50f, 50f, 3f, fill(B));
+                      }
+                  }
+                  cv.restore();
+              }
+
+              // ---------- styles ----------
+              void hero() {
+                  bg(th[0], th[1], th[2]);
+                  glow(Wd * 0.80f, Hd * 0.45f, Wd * 0.38f, th[5]);
+                  glow(Wd * 0.97f, Hd * 0.92f, Wd * 0.28f, th[6]);
+                  for (int i = 0; i < 4; i++) {
+                      float x0 = Wd - 118 + i * 14;
+                      Path q = path("M " + (x0 + 6) + " 10 L " + (x0 + 14) + " 10 L " + (x0 + 8) + " 22 L " + x0 + " 22 Z");
+                      cv.drawPath(q, fill(al(th[3], 0x30 + i * 0x10)));
+                  }
+                  scene(st.cat, Wd * 0.83f, Hd * 0.52f, Math.min(Wd * 0.34f, Hd * 0.74f));
+                  header(14, 20, 18, 15, 0xFFFFFFFF, true);
+                  float cy = (Hd + 4) / 2f, cx = 53f;
+                  ring(cx, cy, 35f, 6f, st.progress, th[3], th[4], 0x33FFFFFF, true);
+                  int ik = iconFor(st.cat);
+                  icon(ik, cx, cy, 38, th[3], th[4], 2.4f);
+                  icon(ik, cx, cy, 38, mix(th[3], 0xFFFFFFFF, 0.6f), mix(th[4], 0xFFFFFFFF, 0.5f), 1.7f);
+                  float tx = 106f;
+                  String pt = st.active ? "En cours · " + st.pill : st.pill;
+                  pill(tx, cy - 27, 22, pt, 12f, al(th[3], 0x44), al(th[3], 0x44), mix(th[3], 0xFFFFFFFF, 0.55f), ik, al(th[3], 0x88));
+                  Paint tt = tp(0xFFFFFFFF, 26, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd * 0.70f - tx), tx, cy + 2, tt);
+                  clockRow(tx, cy + 30, 15, 16, 0xFFEEF0FF);
+                  Paint tg = tp(mix(th[3], 0xFFFFFFFF, 0.65f), 12.5f, REG, LEFT);
+                  String tag = fit(st.tagline, tg, Wd * 0.72f - 40);
+                  txt(tag, 14, Hd - 16, tg);
+                  icon(I_TARGET, 14 + tg.measureText(tag) + 12, Hd - 16, 15, th[3], th[4], 1.8f);
+              }
+
+              void card(float artX, float artY, float artS) {
+                  bg(th[0], th[1], th[2]);
+                  glow(Wd * 0.85f, Hd * 0.45f, Wd * 0.5f, th[5]);
+                  glow(Wd * 0.1f, Hd * 1.0f, Wd * 0.4f, th[6]);
+                  scene(st.cat, artX, artY, artS);
+              }
+
+              void tile(float cy, float sz) {
+                  RectF tile = new RectF(12, cy - sz / 2, 12 + sz, cy + sz / 2);
+                  Paint tl = fill(0xFFFFFFFF);
+                  lg(tl, 12, cy + sz / 2, 12 + sz, cy - sz / 2, th[3], th[4]);
+                  cv.drawRoundRect(tile, 11, 11, tl);
+                  icon(iconFor(st.cat), 12 + sz / 2, cy, sz * 0.62f, onAcc(), onAcc(), 1.8f);
+              }
+
+              void v1() {
+                  card(Wd - 30, 56f, 52f);
+                  cv.drawPath(path("M " + (Wd - 84) + " 0 L " + (Wd - 40) + " 0 L " + (Wd - 70) + " 40 L " + (Wd - 114) + " 40 Z"), fill(al(th[3], 0x33)));
+                  cv.drawPath(path("M " + (Wd - 52) + " 0 L " + (Wd - 24) + " 0 L " + (Wd - 46) + " 28 L " + (Wd - 74) + " 28 Z"), fill(al(th[4], 0x55)));
+                  cv.drawPath(path("M " + (Wd - 110) + " " + Hd + " C " + (Wd - 60) + " " + (Hd - 6) + " " + (Wd - 20) + " " + (Hd - 30) + " " + Wd + " " + (Hd - 58) + " L " + Wd + " " + Hd + " Z"), fill(al(th[4], 0x66)));
+                  cv.drawPath(path("M " + (Wd - 70) + " " + Hd + " C " + (Wd - 40) + " " + (Hd - 4) + " " + (Wd - 14) + " " + (Hd - 18) + " " + Wd + " " + (Hd - 34) + " L " + Wd + " " + Hd + " Z"), fill(al(th[3], 0x77)));
+                  header(12, 18, 15, 12, 0xFFFFFFFF, true);
+                  tile(57, 42);
+                  Paint tt = tp(0xFFFFFFFF, 16, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd - 64 - 52), 64, 50, tt);
+                  clockRow(64, 70, 12, 11.5f, 0xFFEEF0FF);
+                  float by = Hd - 38;
+                  Paint lab = tp(0xFFFFFFFF, 11, BOLD, RIGHT);
+                  float lw = lab.measureText(st.pill);
+                  RectF track = new RectF(12, by - 3, Wd - 20 - lw, by + 3);
+                  cv.drawRoundRect(track, 3, 3, fill(0x44000000));
+                  if (st.progress > 0.01f) {
+                      RectF fl = new RectF(12, by - 3, 12 + track.width() * st.progress, by + 3);
+                      Paint fp = fill(0xFFFFFFFF);
+                      lg(fp, 12, 0, track.right, 0, th[3], th[4]);
+                      cv.drawRoundRect(fl, 3, 3, fp);
+                  }
+                  txt(st.pill, Wd - 12, by, lab);
+                  Paint mo = tp(mix(th[3], 0xFFFFFFFF, 0.25f), 22, SCRIPT, LEFT);
+                  txt(st.motto, 12, Hd - 16, mo);
+                  icon(iconFor(st.cat), 12 + mo.measureText(st.motto) + 14, Hd - 16, 15, th[3], th[4], 1.8f);
+              }
+
+              void v2() {
+                  card(Wd - 32, Hd * 0.60f, 62f);
+                  header(12, 18, 15, 12, 0xFFFFFFFF, true);
+                  RectF tl = new RectF(12, 36, 54, 78);
+                  cv.drawRoundRect(tl, 11, 11, fill(0x55000000));
+                  cv.drawRoundRect(tl, 11, 11, stroke(0x33FFFFFF, 1f));
+                  icon(iconFor(st.cat), 33, 57, 28, th[3], th[4], 1.9f);
+                  Paint tt = tp(0xFFFFFFFF, 16, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd - 64 - 44), 64, 50, tt);
+                  clockRow(64, 70, 12, 11.5f, 0xFFF2F2FF);
+                  pill(12, Hd - 22, 26, st.pill, 13, th[3], th[4], onAcc(), 0, 0);
+              }
+
+              void v3() {
+                  card(Wd - 32, Hd * 0.62f, 60f);
+                  header(12, 18, 15, 12, 0xFFFFFFFF, false);
+                  cv.save();
+                  cv.rotate(-8f, Wd - 44, 18);
+                  txt(st.motto, Wd - 44, 18, blur(tp(th[4], 15, SCRIPT, CENTER), 4));
+                  txt(st.motto, Wd - 44, 18, tp(mix(th[4], 0xFFFFFFFF, 0.85f), 15, SCRIPT, CENTER));
+                  cv.restore();
+                  ring(35, 58, 20, 4.5f, st.progress, th[3], th[4], 0x33FFFFFF, true);
+                  int ik = iconFor(st.cat) == I_FILM ? I_PLAY : iconFor(st.cat);
+                  icon(ik, 35, 58, 20, 0xFFFFFFFF, 0xFFFFFFFF, 1.8f);
+                  Paint tt = tp(0xFFFFFFFF, 18, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd - 66 - 40), 66, 50, tt);
+                  clockRow(66, 70, 12, 11.5f, 0xFFEEF0FF);
+                  pill(12, Hd - 22, 26, st.pill, 13, th[3], th[4], onAcc(), 0, 0);
+              }
+
+              void v4() {
+                  bg(th[0], th[1], th[2]);
+                  glow(Wd * 0.2f, Hd * 0.6f, Wd * 0.3f, al(th[5], 0x44));
+                  scene(st.cat, Wd - 56, Hd * 0.5f, Hd * 0.95f);
+                  cv.drawRect(0, 0, Wd, Hd, fill(al(th[1], 0xC8)));
+                  header(14, 15, 13, 11.5f, 0xB3FFFFFF, true);
+                  float cy = Hd * 0.58f;
+                  ring(40, cy, 22, 4.5f, st.progress, th[3], th[4], 0x33FFFFFF, true);
+                  icon(iconFor(st.cat), 40, cy, 24, mix(th[3], 0xFFFFFFFF, 0.7f), mix(th[4], 0xFFFFFFFF, 0.6f), 1.8f);
+                  float tx = 78f;
+                  float pw = pillW(st.pill, 12.5f, true);
+                  Paint tt = tp(0xFFFFFFFF, 17, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd - tx - pw - 28), tx, cy - 12, tt);
+                  clockRow(tx, cy + 7, 12, 12.5f, 0xCCFFFFFF);
+                  pill(Wd - 14 - pw, cy - 8, 26, st.pill, 12.5f, al(th[3], 0x33), al(th[4], 0x33), 0xFFFFFFFF, I_STOP, al(th[3], 0xCC));
+                  float by = Hd - 11;
+                  RectF track = new RectF(tx, by - 2.5f, Wd - 14, by + 2.5f);
+                  cv.drawRoundRect(track, 2.5f, 2.5f, fill(0x33FFFFFF));
+                  if (st.progress > 0.01f) {
+                      Paint fp = fill(0xFFFFFFFF);
+                      lg(fp, tx, 0, Wd - 14, 0, th[3], th[4]);
+                      cv.drawRoundRect(new RectF(tx, by - 2.5f, tx + track.width() * st.progress, by + 2.5f), 2.5f, 2.5f, fp);
+                  }
+              }
+
+              void v5() {
+                  bg(th[0], th[1], th[2]);
+                  glow(Wd * 0.85f, Hd * 0.5f, Wd * 0.4f, al(th[5], 0x88));
+                  scene(st.cat, Wd - 46, Hd * 0.5f, Hd * 1.05f);
+                  cv.drawRect(0, 0, Wd, Hd, fill(al(th[1], 0xC0)));
+                  float cy = Hd / 2f;
+                  tile(cy, 52);
+                  float tx = 76f;
+                  txt("Ma routine", tx, cy - 20, tp(0xBBFFFFFF, 11, REG, LEFT));
+                  Paint tt = tp(0xFFFFFFFF, 17, BOLD, LEFT);
+                  txt(fit(st.title, tt, Wd - tx - 36), tx, cy, tt);
+                  clockRow(tx, cy + 20, 12, 12, 0xDDFFFFFF);
+                  icon(I_CHEV, Wd - 18, cy, 16, 0xFFFFFFFF, 0xFFFFFFFF, 2.2f);
+              }
+          }
+          EOF_WART
+          cat > app/src/main/res/drawable/widget_placeholder.xml <<'EOF_WPH'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <gradient android:angle="315" android:startColor="#FF070B1C" android:endColor="#FF161544"/>
+              <corners android:radius="22dp"/>
+          </shape>
+          EOF_WPH
+          cat > app/src/main/res/xml/w_gaming_info.xml <<'EOF_WINFO1'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="180dp"
+              android:minHeight="110dp"
+              android:minResizeWidth="130dp"
+              android:minResizeHeight="90dp"
+              android:targetCellWidth="3"
+              android:targetCellHeight="2"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WINFO1
+          cat > app/src/main/res/xml/w_cinema_info.xml <<'EOF_WINFO2'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="180dp"
+              android:minHeight="110dp"
+              android:minResizeWidth="130dp"
+              android:minResizeHeight="90dp"
+              android:targetCellWidth="3"
+              android:targetCellHeight="2"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WINFO2
+          cat > app/src/main/res/xml/w_serie_info.xml <<'EOF_WINFO3'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="180dp"
+              android:minHeight="110dp"
+              android:minResizeWidth="130dp"
+              android:minResizeHeight="90dp"
+              android:targetCellWidth="3"
+              android:targetCellHeight="2"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WINFO3
+          cat > app/src/main/res/xml/w_mini_info.xml <<'EOF_WINFO4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="250dp"
+              android:minHeight="40dp"
+              android:minResizeWidth="180dp"
+              android:minResizeHeight="40dp"
+              android:targetCellWidth="4"
+              android:targetCellHeight="1"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WINFO4
+          cat > app/src/main/res/xml/w_compact_info.xml <<'EOF_WINFO5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="180dp"
+              android:minHeight="40dp"
+              android:minResizeWidth="110dp"
+              android:minResizeHeight="40dp"
+              android:targetCellWidth="3"
+              android:targetCellHeight="1"
+              android:updatePeriodMillis="1800000"
+              android:initialLayout="@layout/routine_widget"
+              android:resizeMode="horizontal|vertical"
+              android:widgetCategory="home_screen" />
+          EOF_WINFO5
+          cat > app/src/main/assets/index.html <<'EOF_5'
+          <!DOCTYPE html>
+          <html lang="fr">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+          <title>Ma routine</title>
+          <style>
+          :root{--bg:#070b1c;--sf:rgba(255,255,255,.06);--ln:rgba(255,255,255,.12);--ink:#f2f5ff;--mu:#9aa6d0;--c1:#b06bff;--c2:#3b8cff;color-scheme:dark}
+          *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+          html,body{height:100%;margin:0}
+          body{background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
+          button{font:inherit;color:inherit}
+          .fx{position:fixed;inset:0;overflow:hidden;pointer-events:none}
+          .orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;transition:background-color 1.6s ease}
+          .o1{width:70vmax;height:70vmax;left:-25vmax;top:-30vmax;background:var(--c1);animation:f1 18s ease-in-out infinite alternate}
+          .o2{width:60vmax;height:60vmax;right:-28vmax;bottom:-22vmax;background:var(--c2);animation:f2 22s ease-in-out infinite alternate}
+          .o3{width:34vmax;height:34vmax;left:30%;top:38%;background:var(--c1);opacity:.18;animation:f3 26s ease-in-out infinite alternate}
+          @keyframes f1{to{transform:translate(12vmax,10vmax) scale(1.15)}}
+          @keyframes f2{to{transform:translate(-10vmax,-8vmax) scale(1.2)}}
+          @keyframes f3{to{transform:translate(-14vmax,8vmax) scale(.8)}}
+          .fx i{position:absolute;bottom:-12px;border-radius:50%;background:var(--c2);opacity:0;animation:rise linear infinite;transition:background-color 1.6s}
+          @keyframes rise{0%{transform:translateY(0);opacity:0}15%{opacity:.7}85%{opacity:.5}100%{transform:translateY(-112vh);opacity:0}}
+          .pg{position:fixed;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+          #home{z-index:1;transition:transform .4s cubic-bezier(.2,.8,.2,1),opacity .4s}
+          #home.off{transform:scale(.96);opacity:0;pointer-events:none}
+          .wrap{max-width:520px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) 18px 30px}
+          .top{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:5}
+          .hi{font-size:13px;color:var(--mu);letter-spacing:.3px}
+          .dt{font-size:20px;font-weight:700;margin-top:1px}
+          #mb{width:42px;height:42px;border-radius:50%;border:1px solid var(--ln);background:var(--sf);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;transition:transform .2s,background .2s}
+          #mb:active{transform:scale(.9)}
+          #mb svg{width:22px;height:22px;fill:var(--ink)}
+          .menu{position:absolute;right:0;top:50px;min-width:200px;padding:6px;border-radius:16px;border:1px solid var(--ln);background:rgba(18,22,52,.92);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 18px 40px rgba(0,0,0,.5);opacity:0;transform:translateY(-8px) scale(.96);transform-origin:top right;pointer-events:none;transition:opacity .2s,transform .2s}
+          .menu.on{opacity:1;transform:none;pointer-events:auto}
+          .menu button{display:flex;align-items:center;gap:12px;width:100%;border:0;background:none;padding:12px 14px;border-radius:12px;text-align:left;font-size:15px}
+          .menu button:active{background:var(--sf)}
+          .menu b{font-size:18px;width:22px;text-align:center}
+          .stage{position:relative;width:min(74vw,300px);aspect-ratio:1;margin:20px auto 6px}
+          .stage svg{width:100%;height:100%;display:block;overflow:visible}
+          #pg,#pgl{transition:stroke-dashoffset 1s linear}
+          .tk{stroke:var(--ln);stroke-width:2;stroke-linecap:round;transition:stroke .4s}
+          .tk.on{stroke:var(--c2)}
+          .face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+          .ic{font-size:clamp(34px,11vw,46px);line-height:1;filter:drop-shadow(0 0 14px var(--c1));animation:bob 3.4s ease-in-out infinite}
+          @keyframes bob{50%{transform:translateY(-6px) scale(1.06)}}
+          .t{font-size:clamp(34px,11vw,46px);font-weight:800;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin-top:6px;line-height:1.05}
+          .t small{font-size:.38em;font-weight:700;color:var(--c2);margin-left:3px;letter-spacing:0}
+          .st{margin-top:6px;font-size:11px;font-weight:800;letter-spacing:2px;color:var(--c1);display:flex;align-items:center;gap:6px}
+          .st:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c1);box-shadow:0 0 0 0 var(--c1);animation:pl 1.8s infinite}
+          @keyframes pl{70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+          .info{text-align:center;margin-top:10px}
+          .ct{font-size:clamp(26px,8vw,34px);font-weight:800;line-height:1.15;background:linear-gradient(90deg,var(--c1),var(--c2));-webkit-background-clip:text;background-clip:text;color:transparent;padding:0 4px;animation:pop .5s ease}
+          @keyframes pop{from{opacity:0;transform:translateY(8px)}}
+          .cr{font-size:18px;color:var(--mu);font-variant-numeric:tabular-nums;margin-top:2px}
+          .cl{display:inline-block;margin-top:12px;padding:8px 16px;border-radius:999px;font-weight:700;font-size:15px;background:linear-gradient(90deg,var(--c1),var(--c2));color:#fff;box-shadow:0 8px 24px -6px var(--c1)}
+          .tg{margin:14px auto 0;max-width:320px;color:#c3cdf5;font-style:italic;font-size:15px}
+          .cards{display:grid;gap:12px;margin-top:24px}
+          .card{border:1px solid var(--ln);background:var(--sf);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:20px;padding:14px 16px;animation:pop .6s ease}
+          .lb{font-size:11px;font-weight:800;letter-spacing:1.6px;color:var(--mu);text-transform:uppercase}
+          .nx{display:flex;align-items:center;gap:14px;margin-top:8px}
+          .nx .e{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;background:linear-gradient(135deg,var(--c1),var(--c2))}
+          .nx .n{font-weight:700;font-size:17px}
+          .nx .w{color:var(--mu);font-size:13px;margin-top:1px}
+          .tl{position:relative;height:14px;margin-top:12px;border-radius:7px;background:rgba(255,255,255,.07);overflow:hidden}
+          .tl i{position:absolute;top:0;bottom:0;opacity:.85;border-right:1px solid var(--bg)}
+          .mk{position:absolute;top:-3px;width:4px;height:20px;border-radius:2px;background:#fff;box-shadow:0 0 12px #fff;transition:left 1s linear}
+          .tr{display:flex;justify-content:space-between;color:var(--mu);font-size:12px;margin-top:8px;font-variant-numeric:tabular-nums}
+          #rt{z-index:3;background:var(--bg);transform:translateX(100%);transition:transform .38s cubic-bezier(.2,.8,.2,1);visibility:hidden}
+          #rt.on{transform:none;visibility:visible}
+          .rh{display:flex;align-items:center;gap:10px;position:sticky;top:0;padding:max(12px,env(safe-area-inset-top)) 14px 12px;background:rgba(7,11,28,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:2;border-bottom:1px solid var(--ln)}
+          .rh button{width:40px;height:40px;border-radius:50%;border:1px solid var(--ln);background:var(--sf);display:flex;align-items:center;justify-content:center}
+          .rh svg{width:20px;height:20px;stroke:var(--ink);fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+          .rh h1{font-size:22px;margin:0}
+          main{max-width:520px;margin:0 auto;padding:16px 14px 40px}
+          .sub{margin:0 0 14px;color:var(--mu);font-size:14px}
+          #now{padding:10px 12px;margin-bottom:14px;border-left:4px solid var(--c1);background:var(--sf);border-radius:0 12px 12px 0;font-size:15px}
+          .row{display:grid;grid-template-columns:88px 1fr;gap:10px;margin-bottom:8px}
+          .tm{display:flex;flex-direction:column;gap:2px}
+          input{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:8px;padding:3px 4px;min-width:0;color-scheme:dark}
+          input:focus{outline:none;border-color:var(--ln);background:rgba(255,255,255,.05)}
+          input[type=time]{width:88px;font-size:15px}
+          .tm input:first-child{font-weight:700}
+          .tm input:last-child{color:var(--mu)}
+          .bl{display:grid;grid-template-columns:1fr auto;align-items:center;gap:2px 6px;padding:8px 6px 8px 12px;border-left:4px solid var(--c);border-radius:0 14px 14px 0;background:var(--sf);background:color-mix(in srgb,var(--c) 14%,transparent)}
+          .bl.now{box-shadow:0 0 0 2px var(--c),0 0 22px -4px var(--c)}
+          .t2{width:100%;font-weight:600}
+          .d{grid-column:1;display:flex;gap:12px;align-items:center;color:var(--mu);font-size:13px;padding-left:4px}
+          .d input{margin:0}
+          .x{grid-row:1/3;grid-column:2;border:0;background:none;color:var(--mu);font-size:22px;padding:6px 10px}
+          .bar{display:flex;gap:8px;margin-top:16px}
+          .b{flex:1;padding:12px;border:1px solid var(--ln);border-radius:14px;background:var(--sf)}
+          .b.p{background:linear-gradient(90deg,var(--c1),var(--c2));border-color:transparent;font-weight:700}
+          .note{margin-top:12px;color:var(--mu);font-size:13px}
+          .au{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(7,11,28,.9);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);overflow-y:auto}
+          .au.on{display:flex}
+          .ac{width:100%;max-width:380px;border:1px solid var(--ln);background:rgba(18,22,52,.85);border-radius:24px;padding:26px 22px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+          .al{font-size:44px;filter:drop-shadow(0 0 14px var(--c1))}
+          .ac h2{margin:6px 0 4px;font-size:24px}
+          .ac .sub{margin:0 0 16px}
+          .ac input{display:block;width:100%;margin:0 0 10px;padding:13px 14px;border:1px solid var(--ln);background:rgba(255,255,255,.06);border-radius:14px;font-size:16px}
+          .ac .b{display:block;width:100%;margin-top:10px}
+          .lk{border:0;background:none;color:var(--c2);margin-top:14px;padding:6px;font-size:14px}
+          .am{min-height:20px;margin-top:12px;font-size:14px;color:#ff8a8a}
+          .am.ok{color:#7ee0b0}
+          .who{padding:8px 14px;font-size:13px;color:var(--ink);border-bottom:1px solid var(--ln);margin-bottom:4px;word-break:break-all}
+          .who small{display:block;color:var(--mu);font-size:11px;margin-top:2px}
+          @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+          </style>
+          </head>
+          <body>
+          <div class="fx" id="fx"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
+
+          <div id="home" class="pg"><div class="wrap">
+           <div class="top">
+            <div><div class="hi" id="hi"></div><div class="dt" id="dt"></div></div>
+            <button id="mb" aria-label="Menu"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="19" r="2.2"/></svg></button>
+            <div class="menu" id="menu">
+             <div class="who" id="who" style="display:none"><div id="wm"></div><small id="sy"></small></div>
+              <button id="m1"><b>🗓️</b>Routine</button>
+             <button id="m2"><b>➕</b>Ajouter un bloc</button>
+              <button id="m3" style="display:none"><b>🚪</b>Se déconnecter</button>
+            </div>
+           </div>
+           <div class="stage">
+            <svg viewBox="0 0 220 220" aria-hidden="true">
+             <defs>
+              <linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop id="sA" offset="0" stop-color="#b06bff"/><stop id="sB" offset="1" stop-color="#3b8cff"/></linearGradient>
+              <filter id="bl" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
+             </defs>
+             <g id="tks"></g>
+             <circle cx="110" cy="110" r="90" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.09)" stroke-width="10"/>
+             <circle id="pgl" cx="110" cy="110" r="90" fill="none" stroke="url(#g)" stroke-width="12" stroke-linecap="round" transform="rotate(-90 110 110)" stroke-dasharray="565.49" stroke-dashoffset="565.49" filter="url(#bl)" opacity=".8"/>
+             <circle id="pg" cx="110" cy="110" r="90" fill="none" stroke="url(#g)" stroke-width="10" stroke-linecap="round" transform="rotate(-90 110 110)" stroke-dasharray="565.49" stroke-dashoffset="565.49"/>
+            </svg>
+            <div class="face">
+             <div class="ic" id="ic">⏱️</div>
+             <div class="t"><span id="clk">00:00</span><small id="sec">:00</small></div>
+             <div class="st" id="st">EN COURS</div>
+            </div>
+           </div>
+           <div class="info">
+            <div class="ct" id="ct"></div>
+            <div class="cr" id="cr"></div>
+            <div class="cl" id="cl"></div>
+            <div class="tg" id="tg"></div>
+           </div>
+           <div class="cards">
+            <div class="card" id="nxc"><div class="lb">Ensuite</div>
+             <div class="nx"><div class="e" id="ne">⏱️</div><div><div class="n" id="nn"></div><div class="w" id="nw"></div></div></div></div>
+            <div class="card"><div class="lb">Ma journée <span id="dp"></span></div>
+             <div class="tl" id="tl"></div>
+             <div class="tr"><span id="t0"></span><span id="t1"></span></div></div>
+           </div>
+          </div></div>
+
+          <div id="rt" class="pg">
+           <div class="rh"><button id="bk" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><h1>Routine</h1></div>
+           <main>
+            <p class="sub" id="sub"></p>
+            <div id="now"></div>
+            <div id="list"></div>
+            <div class="bar"><button class="b p" id="add">Ajouter un bloc</button><button class="b" id="rst">Réinitialiser</button></div>
+            <p class="note">Touche une heure ou un titre pour le modifier. Commence un titre par « Pause » pour le griser. Décoche « Notification » pour couper le rappel d'un bloc.</p>
+           </main>
+          </div>
+
+          <div id="auth" class="au"><div class="ac">
+           <div class="al">⏱️</div>
+           <h2 id="at">Connexion</h2>
+           <p class="sub" id="as"></p>
+           <div id="af">
+            <input id="ae" type="email" placeholder="Email" autocomplete="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false">
+            <input id="ap" type="password" placeholder="Mot de passe (6 caractères minimum)" autocomplete="current-password">
+            <button class="b p" id="ago">Se connecter</button>
+            <button class="b" id="asw">Créer un compte</button>
+            <button class="lk" id="afg">Mot de passe oublié ?</button>
+           </div>
+           <div id="av" style="display:none">
+            <button class="b p" id="ach">J'ai vérifié mon email</button>
+            <button class="b" id="are">Renvoyer l'email</button>
+            <button class="lk" id="alo">Changer de compte</button>
+           </div>
+           <div class="am" id="am"></div>
+          </div></div>
+
+          <script>
+          const KEY="routine-v1";
+          const DEF=[["06:00","06:30","Réveil"],["06:30","07:15","Anglais"],["07:15","07:45","Pause petit-déjeuner"],["07:45","08:45","Lecture"],["08:45","09:00","Pause"],["09:00","09:45","Anglais (écoute et pratique)"],["09:45","10:00","Pause"],["10:00","12:00","Trading"],["12:00","13:00","Pause déjeuner"],["13:00","14:30","Jeu vidéo"],["14:30","14:45","Pause"],["14:45","16:15","Série ou film"],["16:15","16:30","Pause"],["16:30","17:30","Lecture"],["17:30","18:30","Pause dîner"],["18:30","19:30","Série ou film"],["19:30","19:45","Pause"],["19:45","20:30","Lecture au calme"],["20:30","21:00","Bilan OODA"]];
+          const CATS=[
+           {k:"pause",m:/^pause|déjeuner|dejeuner|dîner|diner/,e:"☕",a:"#5eead4",b:"#38bdf8",t:"Respire. Recharge-toi."},
+           {k:"game",m:/jeu|game|gaming/,e:"🎮",a:"#b06bff",b:"#3b8cff",t:"Concentre-toi. Le meilleur est devant toi."},
+           {k:"film",m:/film|série|serie|ciné|cine/,e:"🎬",a:"#ffb347",b:"#ff5a1f",t:"Détends-toi et profite du moment."},
+           {k:"trade",m:/trad/,e:"📈",a:"#34e0a1",b:"#19a6ff",t:"Respecte ton plan, un trade à la fois."},
+           {k:"read",m:/lecture|livre|read/,e:"📖",a:"#ffd166",b:"#ef8354",t:"Une page après l'autre."},
+           {k:"lang",m:/anglais|english|langue/,e:"🗣️",a:"#ff6bd6",b:"#6b8cff",t:"Chaque jour, un peu mieux."},
+           {k:"wake",m:/réveil|reveil|lever/,e:"🌅",a:"#ffd36b",b:"#ff7a59",t:"Une belle journée t'attend."},
+           {k:"review",m:/bilan|ooda/,e:"🎯",a:"#a78bfa",b:"#6366f1",t:"Observer, s'orienter, décider, agir."}];
+          const DEFC={k:"gen",e:"⏱️",a:"#60a5fa",b:"#818cf8",t:"Reste concentré sur l'essentiel."};
+          const $=id=>document.getElementById(id);
+          const pad=n=>String(n).padStart(2,"0");
+          const mn=t=>{const p=(t||"").split(":");return(+p[0]||0)*60+(+p[1]||0)};
+          const hm=n=>{n=((n%1440)+1440)%1440;return pad(Math.floor(n/60))+":"+pad(n%60)};
+          const fmt=d=>d<=0?"0 min":d<60?d+" min":Math.floor(d/60)+" h"+(d%60?" "+pad(d%60):"");
+          const fmtd=d=>d<=0?"fin avant le début":fmt(d);
+          const cat=t=>{t=(t||"").toLowerCase();for(const c of CATS)if(c.m.test(t))return c;return DEFC};
+          const fresh=()=>DEF.map(([s,e,t])=>({s,e,t,n:true}));
+          function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(Array.isArray(d)&&d.length)return d}catch(e){}return fresh()}
+          function persist(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}try{if(window.Android)Android.save(JSON.stringify(data))}catch(e){}}
+          function save(){persist();wr(TS,String(Date.now()));queuePush()}
+          function mk(tag,cls){const e=document.createElement(tag);if(cls)e.className=cls;return e}
+          function inp(type,v,label){const e=mk("input");e.type=type;e.value=v||"";e.setAttribute("aria-label",label);return e}
+          let data=load(),rows=[],curK="",litN=-1;
+
+          /* ---------- Routine (édition) ---------- */
+          function render(){
+           data.sort((a,b)=>mn(a.s)-mn(b.s));
+           const L=$("list");L.innerHTML="";rows=[];
+           data.forEach((x,i)=>{
+            const r=mk("div","row"),tm=mk("div","tm");
+            const a=inp("time",x.s,"Début"),b=inp("time",x.e,"Fin");
+            tm.append(a,b);
+            const bl=mk("div","bl");bl.style.setProperty("--c",cat(x.t).a);
+            const t=inp("text",x.t,"Titre");t.className="t2";
+            const d=mk("div","d"),sp=mk("span");sp.textContent=fmtd(mn(x.e)-mn(x.s));
+            const lb=mk("label"),cb=inp("checkbox","","Notification");cb.checked=x.n!==false;
+            cb.onchange=()=>{x.n=cb.checked;save()};
+            lb.append(cb," Notification");d.append(sp,lb);
+            const del=mk("button","x");del.textContent="×";del.setAttribute("aria-label","Supprimer ce bloc");
+            a.onchange=()=>{x.s=a.value||x.s;commit()};
+            b.onchange=()=>{x.e=b.value||x.e;commit()};
+            t.onchange=()=>{x.t=t.value;commit()};
+            del.onclick=()=>{data.splice(i,1);commit()};
+            bl.append(t,del,d);r.append(tm,bl);L.append(r);rows.push(bl);
+           });
+           $("sub").textContent=data.length?"Lever à "+data[0].s+", coucher à "+data[data.length-1].e:"Aucun bloc pour l'instant";
+           buildTl();tick();home();
+          }
+          function commit(){save();render()}
+          function tick(){
+           const n=new Date(),c=n.getHours()*60+n.getMinutes();let k=-1;
+           data.forEach((x,i)=>{const on=mn(x.s)<=c&&c<mn(x.e);if(on&&k<0)k=i;if(rows[i])rows[i].classList.toggle("now",on&&k===i)});
+           $("now").textContent=k>=0?"Maintenant : "+data[k].t+", jusqu'à "+data[k].e:"Aucun bloc en cours";
+          }
+          function addBlock(){const s=Math.min(data.length?mn(data[data.length-1].e):720,1409);data.push({s:hm(s),e:hm(s+30),t:"Nouvelle activité",n:true});commit()}
+          $("add").onclick=addBlock;
+          let armed=0;
+          $("rst").onclick=()=>{const b=$("rst");if(!armed){armed=1;b.textContent="Confirmer la réinitialisation";setTimeout(()=>{armed=0;b.textContent="Réinitialiser"},3000)}else{armed=0;b.textContent="Réinitialiser";data=fresh();commit()}};
+
+          /* ---------- Navigation : menu 3 points + page Routine ---------- */
+          function showRt(on){$("rt").classList.toggle("on",on);$("home").classList.toggle("off",on);if(on)$("rt").scrollTop=0}
+          window.addEventListener("hashchange",()=>showRt(location.hash==="#routine"));
+          function openRt(){closeMenu();location.hash="routine"}
+          function closeMenu(){$("menu").classList.remove("on")}
+          $("mb").onclick=e=>{e.stopPropagation();$("menu").classList.toggle("on")};
+          document.addEventListener("click",e=>{if(!$("menu").contains(e.target))closeMenu()});
+          $("m1").onclick=openRt;
+          $("m2").onclick=()=>{openRt();setTimeout(()=>{addBlock();const L=$("list");$("rt").scrollTop=$("rt").scrollHeight},120)};
+          $("bk").onclick=()=>{if(location.hash==="#routine")history.back();else showRt(false)};
+
+          /* ---------- Accueil dynamique ---------- */
+          const NS="http://www.w3.org/2000/svg",CIRC=565.49;
+          for(let i=0;i<60;i++){const a=i*Math.PI/30,r1=i%5?102:99,l=document.createElementNS(NS,"line");l.setAttribute("class","tk");l.setAttribute("x1",110+r1*Math.sin(a));l.setAttribute("y1",110-r1*Math.cos(a));l.setAttribute("x2",110+107*Math.sin(a));l.setAttribute("y2",110-107*Math.cos(a));$("tks").append(l)}
+          const tkEls=$("tks").children;
+          for(let i=0;i<16;i++){const p=mk("i"),s=2+Math.random()*3.5;p.style.cssText="left:"+Math.random()*100+"%;width:"+s+"px;height:"+s+"px;animation-duration:"+(10+Math.random()*14)+"s;animation-delay:-"+Math.random()*20+"s";$("fx").append(p)}
+          function theme(c){
+           if(curK===c.k)return;curK=c.k;
+           const r=document.documentElement.style;r.setProperty("--c1",c.a);r.setProperty("--c2",c.b);
+           $("sA").setAttribute("stop-color",c.a);$("sB").setAttribute("stop-color",c.b);
+           $("ic").textContent=c.e;
+           const t=$("ct");t.style.animation="none";void t.offsetWidth;t.style.animation="";
+          }
+          function buildTl(){
+           const T=$("tl");T.innerHTML="";
+           if(!data.length){$("t0").textContent="";$("t1").textContent="";return}
+           const a=Math.min(...data.map(x=>mn(x.s))),b=Math.max(...data.map(x=>mn(x.e))),sp=Math.max(1,b-a);
+           data.forEach(x=>{const i=mk("i");i.style.left=((mn(x.s)-a)/sp*100)+"%";i.style.width=(Math.max(0,mn(x.e)-mn(x.s))/sp*100)+"%";i.style.background=cat(x.t).a;T.append(i)});
+           const m=mk("div","mk");m.id="mk";T.append(m);
+           $("t0").textContent=hm(a);$("t1").textContent=hm(b);T.dataset.a=a;T.dataset.b=b;
+          }
+          function home(){
+           const n=new Date(),c=n.getHours()*60+n.getMinutes()+n.getSeconds()/60;
+           const h=n.getHours();
+           $("hi").textContent=h<5||h>=18?"Bonsoir":h<12?"Bonjour":"Bon après-midi";
+           let ds="";try{ds=n.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}catch(e){}
+           $("dt").textContent=ds?ds.charAt(0).toUpperCase()+ds.slice(1):"";
+           $("clk").textContent=pad(n.getHours())+":"+pad(n.getMinutes());$("sec").textContent=":"+pad(n.getSeconds());
+           const L=[...data].sort((a,b)=>mn(a.s)-mn(b.s));
+           const T=$("tl"),ta=+T.dataset.a||0,tb=+T.dataset.b||1440,mk2=$("mk");
+           const dp=Math.max(0,Math.min(1,(c-ta)/Math.max(1,tb-ta)));
+           if(mk2)mk2.style.left="calc("+(dp*100)+"% - 2px)";
+           $("dp").textContent=L.length?"· "+Math.round(dp*100)+" %":"";
+           let k=-1;L.forEach((x,i)=>{if(k<0&&mn(x.s)<=c&&c<mn(x.e))k=i});
+           const live=k>=0;let sh=k,p=0;
+           if(live){p=(c-mn(L[k].s))/Math.max(1,mn(L[k].e)-mn(L[k].s))}
+           else{sh=L.findIndex(x=>mn(x.s)>c);if(sh<0&&L.length)sh=0}
+           const x=sh>=0?L[sh]:null;
+           if(!x){theme(DEFC);$("ct").textContent="Aucune activité";$("cr").textContent="";$("cl").style.display="none";$("tg").textContent="Ajoute tes blocs via le menu ⋮";$("nxc").style.display="none";$("st").textContent="LIBRE";return}
+           const ct=cat(x.t);theme(ct);
+           $("ct").textContent=x.t;$("cr").textContent=x.s+" – "+x.e;$("tg").textContent=ct.t;
+           $("st").textContent=live?"EN COURS":"ENSUITE";
+           const cl=$("cl");cl.style.display="";
+           if(live)cl.textContent="Il reste "+fmt(Math.ceil(mn(x.e)-c));
+           else{let dl=mn(x.s)-c;if(dl<0)dl+=1440;cl.textContent="Commence dans "+fmt(Math.ceil(dl))}
+           const off=CIRC*(1-p);$("pg").style.strokeDashoffset=off;$("pgl").style.strokeDashoffset=off;
+           const lit=Math.floor(p*60);
+           if(lit!==litN){litN=lit;for(let i=0;i<60;i++)tkEls[i].classList.toggle("on",i<lit)}
+           const y=L.length>1?L[(sh+1)%L.length]:null;
+           $("nxc").style.display=y?"":"none";
+           if(y){const cy=cat(y.t);$("ne").textContent=cy.e;$("nn").textContent=y.t;$("nw").textContent="à "+y.s+" · durée "+fmt(mn(y.e)-mn(y.s))}
+          }
+          /* ---------- Compte + sauvegarde en ligne (Firebase, API REST) ---------- */
+          const FB_KEY="__FB_API_KEY__",FB_PROJ="__FB_PROJECT_ID__";
+          const CLOUD=/^AIza[\w-]{30,}$/.test(FB_KEY)&&/^[a-z0-9][a-z0-9-]{3,}$/.test(FB_PROJ);
+          const SES="routine-session",OWN="routine-owner",TS="routine-ts";
+          const IDT="https://identitytoolkit.googleapis.com/v1/accounts:";
+          const AUTH_BAD=/TOKEN_EXPIRED|USER_NOT_FOUND|USER_DISABLED|INVALID_REFRESH_TOKEN|CREDENTIAL_TOO_OLD|INVALID_GRANT/;
+          const ERR={EMAIL_EXISTS:"Cet email a déjà un compte.",EMAIL_NOT_FOUND:"Email ou mot de passe incorrect.",INVALID_PASSWORD:"Email ou mot de passe incorrect.",INVALID_LOGIN_CREDENTIALS:"Email ou mot de passe incorrect.",INVALID_EMAIL:"Email invalide.",MISSING_PASSWORD:"Entre ton mot de passe.",USER_DISABLED:"Ce compte est désactivé.",TOO_MANY_ATTEMPTS_TRY_LATER:"Trop d'essais. Réessaie dans quelques minutes.",OPERATION_NOT_ALLOWED:"Connexion par email désactivée dans Firebase."};
+          let ses=null,idTok="",idExp=0,pushT=0,busy=false,mode="login",lastPull=0;
+          function rd(k){try{return localStorage.getItem(k)}catch(e){return null}}
+          function wr(k,v){try{if(v==null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){}}
+          function errMsg(m){m=String(m||"");if(m.indexOf("WEAK_PASSWORD")===0)return"Mot de passe trop faible (6 caractères minimum).";const k=Object.keys(ERR).find(x=>m.indexOf(x)===0);return k?ERR[k]:"Erreur réseau ou serveur. Vérifie ta connexion."}
+          async function api(url,body){
+           const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-Firebase-Locale":"fr"},body:JSON.stringify(body)});
+           const j=await r.json().catch(()=>({}));
+           if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP"+r.status));
+           return j}
+          function setSes(j){
+           const o=ses||{};
+           ses={uid:j.localId||j.user_id||o.uid,email:j.email||o.email,rt:j.refreshToken||j.refresh_token||o.rt,ver:!!o.ver&&(!j.localId||j.localId===o.uid)};
+           idTok=j.idToken||j.id_token||"";idExp=Date.now()+((+j.expiresIn||+j.expires_in||3600)-60)*1000;
+           wr(SES,JSON.stringify(ses))}
+          async function token(force){
+           if(!ses)throw new Error("NOAUTH");
+           if(!force&&idTok&&Date.now()<idExp)return idTok;
+           const r=await fetch("https://securetoken.googleapis.com/v1/token?key="+FB_KEY,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"grant_type=refresh_token&refresh_token="+encodeURIComponent(ses.rt)});
+           const j=await r.json().catch(()=>({}));
+           if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP"+r.status));
+           setSes(j);return idTok}
+          async function isVerified(){
+           const t=await token(true);
+           const j=await api(IDT+"lookup?key="+FB_KEY,{idToken:t});
+           const u=j.users&&j.users[0];return !!(u&&u.emailVerified)}
+          function docUrl(){return"https://firestore.googleapis.com/v1/projects/"+FB_PROJ+"/databases/(default)/documents/users/"+ses.uid}
+          async function cloudGet(){
+           const t=await token();
+           const r=await fetch(docUrl(),{headers:{Authorization:"Bearer "+t}});
+           if(r.status===404)return null;
+           if(!r.ok)throw new Error("HTTP"+r.status);
+           const f=(await r.json()).fields||{};
+           return{routine:(f.routine&&f.routine.stringValue)||"",ts:+((f.ts&&f.ts.integerValue)||0)}}
+          async function cloudPut(){
+           const t=await token();
+           const ts=+rd(TS)||Date.now();
+           const r=await fetch(docUrl(),{method:"PATCH",headers:{Authorization:"Bearer "+t,"Content-Type":"application/json"},body:JSON.stringify({fields:{routine:{stringValue:JSON.stringify(data)},ts:{integerValue:String(ts)}}})});
+           if(!r.ok)throw new Error("HTTP"+r.status)}
+          function setSync(t){$("sy").textContent=t||""}
+          function updWho(){$("who").style.display=ses?"":"none";$("m3").style.display=ses?"":"none";$("wm").textContent=ses?ses.email:""}
+          function queuePush(){
+           if(!CLOUD||!ses||!ses.ver)return;
+           clearTimeout(pushT);
+           pushT=setTimeout(async()=>{pushT=0;try{await cloudPut();setSync("✓ Sauvegardé en ligne")}catch(e){setSync("⚠ Pas encore sauvegardé en ligne")}},1500)}
+          async function pull(){
+           lastPull=Date.now();
+           let c=null;
+           try{c=await cloudGet()}catch(e){setSync(/403/.test(String(e.message))?"⚠ Accès refusé (règles Firestore)":"⚠ Hors ligne : données locales");return}
+           const lts=+rd(TS)||0,own=rd(OWN);
+           try{
+            if(c&&c.routine){
+             if(own===ses.uid&&lts>c.ts)await cloudPut();
+             else{const d=JSON.parse(c.routine);if(Array.isArray(d)){data=d;wr(TS,String(c.ts));persist();render()}}
+            }else{
+             if(own!==ses.uid){data=fresh();wr(TS,String(Date.now()))}
+             persist();render();await cloudPut()}
+            wr(OWN,ses.uid);setSync("✓ Synchronisé")
+           }catch(e){setSync("⚠ Synchronisation impossible")}}
+          function msg(t,ok){const m=$("am");m.textContent=t||"";m.className="am"+(ok?" ok":"")}
+          function setMode(m){
+           mode=m;const s=m==="signup";
+           $("at").textContent=s?"Créer un compte":"Connexion";
+           $("as").textContent=s?"Ton email servira à confirmer le compte.":"Connecte-toi pour retrouver ta routine sur tous tes appareils.";
+           $("ago").textContent=s?"S'inscrire":"Se connecter";
+           $("asw").textContent=s?"J'ai déjà un compte":"Créer un compte";
+           $("afg").style.display=s?"none":"";
+           $("ap").setAttribute("autocomplete",s?"new-password":"current-password")}
+          function showAuth(v){
+           $("auth").classList.toggle("on",!!v);
+           $("af").style.display=v==="login"?"":"none";
+           $("av").style.display=v==="verify"?"":"none";
+           if(v==="login")setMode(mode);
+           if(v==="verify"){$("at").textContent="Vérifie ton email";$("as").textContent="Un email de confirmation a été envoyé à "+(ses?ses.email:"")+". Clique sur le lien dans l'email, puis reviens ici."}
+           msg("")}
+          async function enter(){ses.ver=true;wr(SES,JSON.stringify(ses));showAuth("");updWho();await pull()}
+          async function submit(){
+           if(busy)return;
+           const em=$("ae").value.trim(),pw=$("ap").value;
+           if(!em||!pw){msg("Entre ton email et ton mot de passe.");return}
+           busy=true;msg("Un instant…",true);
+           try{
+            if(mode==="signup"){
+             const j=await api(IDT+"signUp?key="+FB_KEY,{email:em,password:pw,returnSecureToken:true});
+             ses=null;setSes(j);
+             showAuth("verify");
+             try{await api(IDT+"sendOobCode?key="+FB_KEY,{requestType:"VERIFY_EMAIL",idToken:idTok});msg("Email envoyé. Pense à regarder tes spams.",true)}
+             catch(e2){msg("Compte créé, mais l'email n'a pas pu être envoyé. Touche « Renvoyer l'email ».")}
+            }else{
+             const j=await api(IDT+"signInWithPassword?key="+FB_KEY,{email:em,password:pw,returnSecureToken:true});
+             ses=null;setSes(j);
+             if(await isVerified())await enter();
+             else{showAuth("verify");msg("Ton email n'est pas encore vérifié. Touche « Renvoyer l'email » si besoin.")}
+            }
+           }catch(e){msg(errMsg(e.message))}
+           busy=false}
+          async function checkVer(){
+           if(busy)return;busy=true;msg("Vérification…",true);
+           try{if(await isVerified())await enter();else msg("Pas encore vérifié. Ouvre le lien reçu par email, puis réessaie.")}
+           catch(e){msg(errMsg(e.message))}
+           busy=false}
+          async function resend(){
+           if(busy)return;busy=true;
+           try{const t=await token();await api(IDT+"sendOobCode?key="+FB_KEY,{requestType:"VERIFY_EMAIL",idToken:t});msg("Email renvoyé à "+ses.email+".",true)}
+           catch(e){msg(errMsg(e.message))}
+           busy=false}
+          async function forgot(){
+           const em=$("ae").value.trim();
+           if(!em){msg("Entre d'abord ton email ci-dessus.");return}
+           try{await api(IDT+"sendOobCode?key="+FB_KEY,{requestType:"PASSWORD_RESET",email:em});msg("Si ce compte existe, un email de réinitialisation a été envoyé.",true)}
+           catch(e){if(String(e.message).indexOf("EMAIL_NOT_FOUND")===0)msg("Si ce compte existe, un email de réinitialisation a été envoyé.",true);else msg(errMsg(e.message))}}
+          async function logout(){
+           try{if(ses&&ses.ver&&pushT){clearTimeout(pushT);pushT=0;await cloudPut()}}catch(e){}
+           ses=null;idTok="";wr(SES,null);wr(OWN,null);wr(TS,null);wr(KEY,null);
+           data=[];persist();render();updWho();setSync("");closeMenu();$("ap").value="";showAuth("login")}
+          async function authInit(){
+           if(!CLOUD)return;
+           let s=null;try{s=JSON.parse(rd(SES))}catch(e){}
+           if(s&&s.uid&&s.rt)ses=s;
+           if(!ses||!ses.ver){data=[];persist();render();showAuth(ses?"verify":"login");return}
+           updWho();
+           try{
+            if(await isVerified())await pull();
+            else{ses.ver=false;wr(SES,JSON.stringify(ses));data=[];persist();render();showAuth("verify")}
+           }catch(e){if(AUTH_BAD.test(String(e.message)))logout();else setSync("⚠ Hors ligne : données locales")}}
+          $("ago").onclick=submit;
+          $("asw").onclick=()=>{setMode(mode==="signup"?"login":"signup");msg("")};
+          $("afg").onclick=forgot;
+          $("ach").onclick=checkVer;
+          $("are").onclick=resend;
+          $("alo").onclick=()=>logout();
+          $("m3").onclick=()=>logout();
+          $("ap").addEventListener("keydown",e=>{if(e.key==="Enter")submit()});
+          document.addEventListener("visibilitychange",()=>{if(!document.hidden&&CLOUD&&ses&&ses.ver&&!pushT&&Date.now()-lastPull>30000)pull()});
+          render();persist();showRt(location.hash==="#routine");authInit();
+          setInterval(()=>{tick();home()},1000);
+          </script>
+          </body>
+          </html>
+          EOF_5
+          cat > app/src/main/res/drawable/ic_fg.xml <<'EOF_6'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#00000000"
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="5"
+                  android:pathData="M54,54m-24,0a24,24 0 1,1 48,0a24,24 0 1,1 -48,0"/>
+              <path
+                  android:fillColor="#00000000"
+                  android:strokeColor="#5BB6D4"
+                  android:strokeWidth="5"
+                  android:strokeLineCap="round"
+                  android:pathData="M54,30A24,24 0 0,1 78,54"/>
+              <path
+                  android:fillColor="#00000000"
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="4.5"
+                  android:strokeLineCap="round"
+                  android:pathData="M54,54L54,40"/>
+              <path
+                  android:fillColor="#00000000"
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="4.5"
+                  android:strokeLineCap="round"
+                  android:pathData="M54,54L63,59"/>
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M54,54m-3,0a3,3 0 1,1 6,0a3,3 0 1,1 -6,0"/>
+          </vector>
+          EOF_6
+          cat > app/src/main/res/drawable/ic_bg.xml <<'EOF_7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#12212F"
+                  android:pathData="M0,0h108v108h-108z"/>
+          </vector>
+          EOF_7
+          cat > app/src/main/res/mipmap-anydpi/ic_launcher.xml <<'EOF_8'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_bg"/>
+              <foreground android:drawable="@drawable/ic_fg"/>
+          </adaptive-icon>
+          EOF_8
+      - name: Configurer Firebase (comptes en ligne)
+        env:
+          FB_API_KEY: ${{ vars.FB_API_KEY }}
+          FB_PROJECT_ID: ${{ vars.FB_PROJECT_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          p = "app/src/main/assets/index.html"
+          t = open(p, encoding="utf-8").read()
+          t = t.replace("__FB_API_KEY__", os.environ.get("FB_API_KEY", "").strip())
+          t = t.replace("__FB_PROJECT_ID__", os.environ.get("FB_PROJECT_ID", "").strip())
+          open(p, "w", encoding="utf-8").write(t)
+          PY
+      - name: Version web (GitHub Pages)
+        continue-on-error: true
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/src/main/assets
+      - name: Cle de signature
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then
+            echo "::error::Secret KEYSTORE_B64 manquant. Ajoute les secrets KEYSTORE_B64 et KEYSTORE_PASSWORD (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          echo "$KS_B64" | tr -d ' \n\r' | base64 -d > "$RUNNER_TEMP/routine.p12"
+      - name: Compiler
+        env:
+          KS_FILE: ${{ runner.temp }}/routine.p12
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_ALIAS: routine
+          VC: ${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon
+      - name: Publier l'APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk routine.apk
+          gh release delete apk -y --cleanup-tag || true
+          gh release create apk routine.apk --title "Ma routine" --notes "APK de Ma routine"
+  pages:
+    needs: apk
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
